@@ -26,7 +26,6 @@ import torch.utils.collect_env
 
 import utils
 
-
 class AverageMeter:
     """
     Computes and stores the average and current value
@@ -219,13 +218,16 @@ def build_work_dir_name(work_dir, dataset, append_dataset, append_time):
 
 
 def l2_promote():
-    _libcudart = ctypes.CDLL('libcudart.so')
-    # Set device limit on the current device
-    # cudaLimitMaxL2FetchGranularity = 0x05
-    pValue = ctypes.cast((ctypes.c_int*1)(), ctypes.POINTER(ctypes.c_int))
-    _libcudart.cudaDeviceSetLimit(ctypes.c_int(0x05), ctypes.c_int(128))
-    _libcudart.cudaDeviceGetLimit(pValue, ctypes.c_int(0x05))
-    assert pValue.contents.value == 128
+    try:
+        _libcudart = ctypes.CDLL('libcudart.so')
+        # Set device limit on the current device
+        # cudaLimitMaxL2FetchGranularity = 0x05
+        pValue = ctypes.cast((ctypes.c_int*1)(), ctypes.POINTER(ctypes.c_int))
+        _libcudart.cudaDeviceSetLimit(ctypes.c_int(0x05), ctypes.c_int(128))
+        _libcudart.cudaDeviceGetLimit(pValue, ctypes.c_int(0x05))
+        assert pValue.contents.value == 128
+    except Exception as e:
+        logging.warning(f"l2_promote: cannot be used -- {e}")
 
 
 def get_default_rng_states(device):
