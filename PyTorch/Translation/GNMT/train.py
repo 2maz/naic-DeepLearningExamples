@@ -379,13 +379,17 @@ def main():
     training_start = time.time()
     args = parse_args()
     if args.affinity != 'disabled':
-        nproc_per_node = torch.cuda.device_count()
-        affinity = gpu_affinity.set_affinity(
-            args.local_rank,
-            nproc_per_node,
-            args.affinity
-        )
-        print(f'{args.local_rank}: thread affinity: {affinity}')
+        try:
+            nproc_per_node = torch.cuda.device_count()
+            affinity = gpu_affinity.set_affinity(
+                args.local_rank,
+                nproc_per_node,
+                args.affinity
+            )
+            print(f'{args.local_rank}: thread affinity: {affinity}')
+        except Exception as e:
+            logging.warning("gpu_affinity cannot be set -- probably this is a non-NVidia GPU in use")
+
     device = utils.set_device(args.cuda, args.local_rank)
     utils.init_distributed(args.cuda)
     args.rank = utils.get_rank()

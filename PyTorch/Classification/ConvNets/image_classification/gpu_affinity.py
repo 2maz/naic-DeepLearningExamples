@@ -3,9 +3,13 @@ import itertools
 import os
 import pathlib
 import re
-
-import pynvml
 from typing import Union
+import logging
+
+try:
+    import pynvml
+except Exception as e:
+    logging.warning("Could not import pynvml")
 
 
 class Device:

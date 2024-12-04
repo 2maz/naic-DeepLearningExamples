@@ -3,10 +3,15 @@ import math
 import os
 import pathlib
 import re
+import logging
 
-import pynvml
+logger = logging.getLogger(__name__)
 
-pynvml.nvmlInit()
+try:
+    import pynvml
+    pynvml.nvmlInit()
+except Exception as e:
+    logger.warning("pynvml can not be used on this system")
 
 
 def systemGetDriverVersion():

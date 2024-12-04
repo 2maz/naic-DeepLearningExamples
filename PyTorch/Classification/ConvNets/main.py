@@ -68,6 +68,7 @@ from image_classification.optimizers import (
 )
 from image_classification.gpu_affinity import set_affinity, AffinityMode
 import dllogger
+import logging
 
 
 def available_models():
@@ -379,8 +380,12 @@ def prepare_for_training(args, model_args, model_arch):
         dist.init_process_group(backend="nccl", init_method="env://")
         args.world_size = torch.distributed.get_world_size()
 
-    affinity = set_affinity(args.gpu, mode=args.gpu_affinity)
-    print(f"Training process {args.local_rank} affinity: {affinity}")
+    try:
+        affinity = set_affinity(args.gpu, mode=args.gpu_affinity)
+        print(f"Training process {args.local_rank} affinity: {affinity}")
+    except Exception as e:
+        logging.warning("affinity cannot be set")
+
 
     if args.seed is not None:
         print("Using seed = {}".format(args.seed))
