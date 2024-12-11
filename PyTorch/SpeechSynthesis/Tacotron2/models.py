@@ -62,7 +62,7 @@ def init_bn(module):
         init_bn(child)
 
 
-def get_model(model_name, model_config, cpu_run,
+def get_model(model_name, model_config, device_type,
               uniform_initialize_bn_weight=False, forward_is_infer=False):
     """ Code chooses a model based on name"""
     model = None
@@ -88,8 +88,7 @@ def get_model(model_name, model_config, cpu_run,
     if uniform_initialize_bn_weight:
         init_bn(model)
 
-    if not cpu_run:
-        model = model.cuda()
+    model = model.to(device_type)
     return model
 
 

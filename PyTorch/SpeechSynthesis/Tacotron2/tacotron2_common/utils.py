@@ -79,4 +79,6 @@ def to_gpu(x):
 
     if torch.cuda.is_available():
         x = x.cuda(non_blocking=True)
+    elif torch.xpu.is_available():
+        x = x.to("xpu", non_blocking=True)
     return x

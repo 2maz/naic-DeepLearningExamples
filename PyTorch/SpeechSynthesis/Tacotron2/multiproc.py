@@ -32,9 +32,8 @@ import torch
 
 
 def main():
-    argslist = list(sys.argv)[1:]
-    world_size = torch.cuda.device_count()
-
+    argslist = list(sys.argv)[2:]
+    world_size = int(list(sys.argv)[1])
     if '--world-size' in argslist:
         argslist[argslist.index('--world-size') + 1] = str(world_size)
     else:

@@ -47,6 +47,11 @@ from tacotron2_common.utils import ParseFromConfigFile
 import dllogger as DLLogger
 from dllogger import StdOutBackend, JSONStreamBackend, Verbosity
 
+def torch_gpu_synchronize(device_type):
+    if device_type == "cuda":
+        torch.cuda.synchronize()
+    elif device_type == "xpu":
+        torch.xpu.synchronize()
 
 def parse_args(parser):
     """
@@ -85,6 +90,8 @@ def parse_args(parser):
                           help='Enable dynamic loss scaling')
     training.add_argument('--amp', action='store_true',
                           help='Enable AMP')
+    training.add_argument('--device-type', type=str, default='cuda', 
+                          help='The device type cuda, xpu, hpu')
     training.add_argument('--cudnn-enabled', action='store_true',
                           help='Enable cudnn')
     training.add_argument('--cudnn-benchmark', action='store_true',
@@ -183,10 +190,16 @@ def init_distributed(args, world_size, rank, group_name):
 
 
 def save_checkpoint(model, optimizer, scaler, epoch, config, output_dir,
-                    model_name, local_rank, world_size):
+                    model_name, local_rank, world_size,
+                    device_type: str = "cuda"):
 
-    random_rng_state = torch.random.get_rng_state().cuda()
-    cuda_rng_state = torch.cuda.get_rng_state(local_rank).cuda()
+    random_rng_state = torch.random.get_rng_state().to(device_type)
+
+    get_rng_state = torch.cuda.get_rng_state
+    if torch.xpu.is_available():
+        get_rng_state = torch.xpu.get_rng_state
+
+    cuda_rng_state = get_rng_state(f"{device_type}:{local_rank}")
 
     random_rng_states_all = [torch.empty_like(random_rng_state) for _ in range(world_size)]
     cuda_rng_states_all = [torch.empty_like(cuda_rng_state) for _ in range(world_size)]
@@ -242,7 +255,13 @@ def load_checkpoint(model, optimizer, scaler, epoch, filepath, local_rank):
 
     epoch[0] = checkpoint['epoch']+1
     device_id = local_rank % torch.cuda.device_count()
-    torch.cuda.set_rng_state(checkpoint['cuda_rng_state_all'][device_id])
+
+    set_rng_state = torch.cuda.set_rng_state
+    if torch.xpu.is_available():
+        set_rng_state = torch.xpu.set_rng_state
+
+    set_rng_state(checkpoint['cuda_rng_state_all'][device_id])
+
     if 'random_rng_states_all' in checkpoint:
         torch.random.set_rng_state(checkpoint['random_rng_states_all'][device_id])
     elif 'random_rng_state' in checkpoint:
@@ -271,7 +290,8 @@ def evaluating(model):
 
 
 def validate(model, criterion, valset, epoch, batch_iter, batch_size,
-             world_size, collate_fn, distributed_run, perf_bench, batch_to_gpu, amp_run):
+             world_size, collate_fn, distributed_run, perf_bench, batch_to_gpu, amp_run,
+             device_type: str = 'cuda'):
     """Handles all the validation scoring and printing"""
     with evaluating(model), torch.no_grad():
         val_sampler = DistributedSampler(valset) if distributed_run else None
@@ -285,12 +305,14 @@ def validate(model, criterion, valset, epoch, batch_iter, batch_size,
         num_iters = 0
         val_items_per_sec = 0.0
         for i, batch in enumerate(val_loader):
-            torch.cuda.synchronize()
+            torch_gpu_synchronize(device_type)
+
             iter_start_time = time.perf_counter()
 
             x, y, num_items = batch_to_gpu(batch)
+
             #AMP upstream autocast
-            with torch.cuda.amp.autocast(enabled=amp_run):
+            with torch.autocast(device_type=device_type, enabled=amp_run, dtype=torch.bfloat16):
                 y_pred = model(x)
                 loss = criterion(y_pred, y)
 
@@ -302,7 +324,8 @@ def validate(model, criterion, valset, epoch, batch_iter, batch_size,
                 reduced_num_items = num_items.item()
             val_loss += reduced_val_loss
 
-            torch.cuda.synchronize()
+            torch_gpu_synchronize(device_type)
+
             iter_stop_time = time.perf_counter()
             iter_time = iter_stop_time - iter_start_time
 
@@ -381,27 +404,33 @@ def main():
     parser = models.model_parser(model_name, parser)
     args, _ = parser.parse_known_args()
 
-    torch.backends.cudnn.enabled = args.cudnn_enabled
-    torch.backends.cudnn.benchmark = args.cudnn_benchmark
+    if args.device_type == 'cuda':
+        torch.backends.cudnn.enabled = args.cudnn_enabled
+        torch.backends.cudnn.benchmark = args.cudnn_benchmark
 
     if distributed_run:
         init_distributed(args, world_size, local_rank, args.group_name)
 
-    torch.cuda.synchronize()
+    torch_gpu_synchronize(args.device_type)
+
     run_start_time = time.perf_counter()
 
     model_config = models.get_model_config(model_name, args)
     model = models.get_model(model_name, model_config,
-                             cpu_run=False,
+                             device_type=args.device_type,
                              uniform_initialize_bn_weight=not args.disable_uniform_initialize_bn_weight)
 
     if distributed_run:
         model = DDP(model, device_ids=[local_rank], output_device=local_rank)
 
-    optimizer = torch.optim.Adam(model.parameters(), lr=args.learning_rate,
-                                 weight_decay=args.weight_decay)
+    optimizer = torch.optim.Adam(model.parameters(),
+                                 lr=args.learning_rate,
+                                 weight_decay=args.weight_decay,
+                                 )
 
-    scaler = torch.cuda.amp.GradScaler(enabled=args.amp)
+    # https://pytorch.org/docs/stable/notes/amp_examples.html
+    # https://pytorch.org/docs/stable/amp.html
+    scaler = torch.GradScaler(args.device_type, enabled=args.amp, init_scale=2**10)
 
     try:
         sigma = args.sigma
@@ -455,7 +484,8 @@ def main():
     model.train()
 
     for epoch in range(start_epoch, args.epochs):
-        torch.cuda.synchronize()
+        torch_gpu_synchronize(args.device_type)
+
         epoch_start_time = time.perf_counter()
         # used to calculate avg items/sec over epoch
         reduced_num_items_epoch = 0
@@ -469,7 +499,8 @@ def main():
             train_loader.sampler.set_epoch(epoch)
 
         for i, batch in enumerate(train_loader):
-            torch.cuda.synchronize()
+            torch_gpu_synchronize(args.device_type)
+
             iter_start_time = time.perf_counter()
             DLLogger.log(step=(epoch, i),
                          data={'glob_iter/iters_per_epoch': str(iteration)+"/"+str(len(train_loader))})
@@ -481,7 +512,7 @@ def main():
             x, y, num_items = batch_to_gpu(batch)
 
             #AMP upstream autocast
-            with torch.cuda.amp.autocast(enabled=args.amp):
+            with torch.autocast(device_type=args.device_type, enabled=args.amp, dtype=torch.bfloat16):
                 y_pred = model(x)
                 loss = criterion(y_pred, y)
 
@@ -502,12 +533,49 @@ def main():
             reduced_num_items_epoch += reduced_num_items
 
             if args.amp:
-                scaler.scale(loss).backward()
-                scaler.unscale_(optimizer)
-                torch.nn.utils.clip_grad_norm_(
-                    model.parameters(), args.grad_clip_thresh)
-                scaler.step(optimizer)
-                scaler.update()
+                #   File "benchmark/SpeechSynthesis/Tacotron2/train.py", line 545, in main
+                #    scaler.step(optimizer)
+                #   File "/usr/local/lib/python3.10/dist-packages/torch/amp/grad_scaler.py", line 450, in step
+                #    len(optimizer_state["found_inf_per_device"]) > 0
+                #   AssertionError: No inf checks were recorded for this optimizer.
+                # 
+                # "AMP/fp16 may not work for every model! For example, most
+                # bf16-pretrained models cannot operate in the fp16 numerical
+                # range of max 65504 and will cause gradients to overflow
+                # instead of underflow. In this case, the scale factor may
+                # decrease under 1 as an attempt to bring gradients to a number
+                # representable in the fp16 dynamic range. While one may expect
+                # the scale to always be above 1, our GradScaler does NOT make
+                # this guarantee to maintain performance. If you encounter NaNs
+                # in your loss or gradients when running with AMP/fp16, verify
+                # your model is compatible." (from 
+                # https://pytorch.org/docs/stable/amp.html#gradient-scaling)
+                # for amp mode
+                # $> print(scaler.__dict__)
+                #     { '_device': 'xpu', '_enabled': True, '_init_scale': 65536.0,
+                #       '_scale': None, '_growth_factor': 2.0, '_backoff_factor': 0.5,
+                #       '_growth_interval': 2000, '_init_growth_tracker': 0,
+                #       '_growth_tracker': None, '_per_optimizer_states':
+                #           defaultdict(<function _refresh_per_optimizer_state at
+                #     0x7fff3f9dbb50>, {})}
+                if torch.xpu.is_available():
+                    #scale_factor = 1024
+                    #scaled_loss = loss*scale_factor
+                    #scaled_loss.backward()
+
+                    ## Scale gradients manually before stepping
+                    #for param in model.parameters():
+                    #    if param.grad is not None:
+                    #        param.grad /= scaler
+                    loss.backward()
+                    optimizer.step()
+                else:
+                    scaler.scale(loss).backward()
+                    scaler.unscale_(optimizer)
+                    torch.nn.utils.clip_grad_norm_(
+                        model.parameters(), args.grad_clip_thresh)
+                    scaler.step(optimizer)
+                    scaler.update()
             else:
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(
@@ -516,7 +584,8 @@ def main():
 
             model.zero_grad(set_to_none=True)
 
-            torch.cuda.synchronize()
+            torch_gpu_synchronize(args.device_type)
+
             iter_stop_time = time.perf_counter()
             iter_time = iter_stop_time - iter_start_time
             items_per_sec = reduced_num_items/iter_time
@@ -526,7 +595,8 @@ def main():
             DLLogger.log(step=(epoch, i), data={'train_iter_time': iter_time})
             iteration += 1
 
-        torch.cuda.synchronize()
+        torch_gpu_synchronize(args.device_type)
+
         epoch_stop_time = time.perf_counter()
         epoch_time = epoch_stop_time - epoch_start_time
 
@@ -540,15 +610,18 @@ def main():
                                                world_size, collate_fn,
                                                distributed_run, args.bench_class=="perf-train",
                                                batch_to_gpu,
-                                               args.amp)
+                                               args.amp,
+                                               args.device_type)
 
         if (epoch % args.epochs_per_checkpoint == 0) and (args.bench_class == "" or args.bench_class == "train"):
             save_checkpoint(model, optimizer, scaler, epoch, model_config,
-                            args.output, args.model_name, local_rank, world_size)
+                            args.output, args.model_name, local_rank, world_size,
+                            device_type=args.device_type)
         if local_rank == 0:
             DLLogger.flush()
 
-    torch.cuda.synchronize()
+    torch_gpu_synchronize(args.device_type)
+
     run_stop_time = time.perf_counter()
     run_time = run_stop_time - run_start_time
     DLLogger.log(step=tuple(), data={'run_time': run_time})
