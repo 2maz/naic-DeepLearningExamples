@@ -120,6 +120,8 @@ def parse_args():
                                   'socket_unique_continuous',
                                   'disabled'],
                          help='type of CPU affinity')
+    general.add_argument('--device-type', type=str, default='cuda',
+                         help='gpu device type as cuda,xpu, or hpu')
 
     dataset = parser.add_argument_group('dataset setup')
     dataset.add_argument('--data', type=str, default='../data/wikitext-103',
@@ -356,7 +358,11 @@ def load_checkpoint(path):
     if os.path.isdir(path):
         path = os.path.join(path, 'checkpoint_last.pt')
 
-    dst = f'cuda:{torch.cuda.current_device()}'
+    if torch.cuda.is_available():
+        dst = f'cuda:{torch.cuda.current_device()}'
+    elif torch.xpu.is_available():
+        dst = f'xpu:{torch.xpu.current_device()}'
+
     logging.info(f'Loading checkpoint from {path}')
     checkpoint = torch.load(path, map_location=dst)
     return checkpoint
@@ -454,7 +460,7 @@ def evaluate(eval_iter, model, args):
             if args.eval_max_steps > 0 and i >= args.eval_max_steps:
                 break
             enable_autocast = args.fp16 and args.amp == 'pytorch'
-            with torch.cuda.amp.autocast(enable_autocast):
+            with torch.autocast(args.device_type, enabled=enable_autocast):
                 loss, mems = model(data, target, mems)
                 loss = loss.float().mean().type_as(loss)
             if warm:
@@ -482,7 +488,7 @@ def train_iteration(model, i, mems, data_chunks, target_chunks, scaler,
         mems[i] = mems[i].to(device, non_blocking=True)
 
     enable_autocast = args.fp16 and args.amp == 'pytorch'
-    with torch.cuda.amp.autocast(enable_autocast):
+    with torch.autocast(args.device_type, enabled=enable_autocast):
         loss, mems[i] = model(data_i, target_i, mems[i])
         loss = loss.float().mean().type_as(loss) / args.batch_chunk
 
@@ -699,7 +705,10 @@ def main():
 
     if args.affinity != 'disabled':
         try:
-            nproc_per_node = torch.cuda.device_count()
+            if torch.xpu.is_available():
+                nproc_per_node = torch.xpu.device_count()
+            else:
+                nproc_per_node = torch.cuda.device_count()
             affinity = utils.gpu_affinity.set_affinity(
                 args.local_rank,
                 nproc_per_node,
@@ -711,9 +720,15 @@ def main():
 
 
     # Initialize device and distributed backend
-    torch.cuda.set_device(args.local_rank)
-    l2_promote()
-    device = torch.device('cuda' if args.cuda else 'cpu')
+    if torch.cuda.is_available():
+        torch.cuda.set_device(args.local_rank)
+        l2_promote()
+        device = torch.device('cuda' if args.cuda else 'cpu')
+    elif torch.xpu.is_available():
+        torch.xpu.set_device(args.local_rank)
+        l2_promote()
+        device = torch.device(args.device_type)
+
     utils.distributed.init_distributed(args.cuda)
 
     args.work_dir = utils.exp_utils.build_work_dir_name(args.work_dir,
@@ -894,7 +909,7 @@ def main():
     scaler = None
     if args.fp16:
         if args.amp == 'pytorch':
-            scaler = torch.cuda.amp.GradScaler()
+            scaler = torch.GradScaler(args.device_type)
         elif args.amp == 'apex':
             model, optimizer = amp.initialize(
                 model,
