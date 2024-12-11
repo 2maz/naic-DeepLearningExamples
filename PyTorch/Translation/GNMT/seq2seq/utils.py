@@ -33,6 +33,12 @@ import torch.distributed as dist
 import torch.nn.init as init
 import torch.utils.collect_env
 
+def torch_gpu_synchronize():
+    if torch.cuda.is_available():
+        torch.cuda.synchronize()
+    elif torch.xpu.is_available():
+        torch.xpu.synchronize()
+
 
 def init_lstm_(lstm, init_weight=0.1):
     """
@@ -174,11 +180,11 @@ def sync_workers():
 @contextmanager
 def timer(name, ndigits=2, sync_gpu=True):
     if sync_gpu:
-        torch.cuda.synchronize()
+        torch_gpu_synchronize()
     start = time.time()
     yield
     if sync_gpu:
-        torch.cuda.synchronize()
+        torch_gpu_synchronize()
     stop = time.time()
     elapsed = round(stop - start, ndigits)
     logging.info(f'TIMER {name} {elapsed}')
@@ -247,18 +253,22 @@ def setup_dllogger(enabled=True, filename=os.devnull):
     dllogger.metadata("train_throughput", {"unit": "tokens/s"})
 
 
-def set_device(cuda, local_rank):
+def set_device(device_type, local_rank):
     """
     Sets device based on local_rank and returns instance of torch.device.
 
     :param cuda: if True: use cuda
     :param local_rank: local rank of the worker
     """
-    if cuda:
+    if device_type == 'cuda':
         torch.cuda.set_device(local_rank)
-        device = torch.device('cuda')
+        device = torch.device(device_type)
+    elif device_type == 'xpu':
+        torch.xpu.set_device(local_rank)
+        device = torch.device(device_type)
     else:
         device = torch.device('cpu')
+
     return device
 
 
@@ -272,7 +282,10 @@ def init_distributed(cuda):
     world_size = int(os.environ.get('WORLD_SIZE', 1))
     distributed = (world_size > 1)
     if distributed:
-        backend = 'nccl' if cuda else 'gloo'
+        if cuda and torch.cuda.is_available():
+            backend = 'nccl'
+        else:
+            backend = 'gloo'
         dist.init_process_group(backend=backend,
                                 init_method='env://')
         assert dist.is_initialized()

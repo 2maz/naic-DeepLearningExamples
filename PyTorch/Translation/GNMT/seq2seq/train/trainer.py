@@ -21,6 +21,7 @@
 
 import logging
 import os
+import sys
 import time
 from itertools import cycle
 
@@ -28,12 +29,21 @@ import numpy as np
 import torch
 import torch.optim
 import torch.utils.data
-from apex.parallel import DistributedDataParallel
-from apex import amp
 
-from seq2seq.train.fp_optimizers import FP16Optimizer
-from seq2seq.train.fp_optimizers import FP32Optimizer
-from seq2seq.train.fp_optimizers import AMPOptimizer
+try:
+    # https://github.com/NVIDIA/apex/tree/master/examples/imagenet
+    from apex.parallel import DistributedDataParallel
+    from apex import amp
+except:
+    print("APEX is not available -- falling back to pytorch DistributedDataParallel")
+    from torch.nn.parallel import DistributedDataParallel
+
+from seq2seq.train.fp_optimizers import (
+        FP16Optimizer,
+        FP32Optimizer,
+        AMPOptimizer,
+        AMPPytorchOptimizer,
+)
 from seq2seq.train.lr_scheduler import WarmupMultiStepLR
 from seq2seq.utils import AverageMeter
 from seq2seq.utils import sync_workers
@@ -63,7 +73,9 @@ class Seq2SeqTrainer:
                  warmup=0,
                  iter_size=1,
                  translator=None,
-                 verbose=False):
+                 verbose=False,
+                 device_type: str = 'cuda',
+                 autocast: bool = False):
         """
         Constructor for the Seq2SeqTrainer.
 
@@ -116,6 +128,12 @@ class Seq2SeqTrainer:
         self.distributed = torch.distributed.is_initialized()
         self.batch_first = model.batch_first
 
+        self.device_type = device_type
+        self.math = math
+        self.autocast = False
+        if "fp16" in self.math:
+            self.autocast = autocast
+
         params = self.model.parameters()
 
         if math == 'manual_fp16':
@@ -136,19 +154,29 @@ class Seq2SeqTrainer:
                                            **scheduler_config)
 
         if math == 'fp16':
-            self.model, self.optimizer = amp.initialize(
-                self.model,
-                self.optimizer,
-                cast_model_outputs=torch.float16,
-                keep_batchnorm_fp32=False,
-                opt_level='O2')
+            if 'apex' in sys.modules:
+                print("Using FP16 with APEX")
+                self.model, self.optimizer = amp.initialize(
+                    self.model,
+                    self.optimizer,
+                    cast_model_outputs=torch.float16,
+                    keep_batchnorm_fp32=False,
+                    opt_level='O2')
 
-            self.fp_optimizer = AMPOptimizer(
-                self.model,
-                grad_clip,
-                loss_scale=loss_scaling['init_scale'],
-                dls_upscale_interval=loss_scaling['upscale_interval']
-                )
+                self.fp_optimizer = AMPOptimizer(
+                    self.model,
+                    grad_clip,
+                    loss_scale=loss_scaling['init_scale'],
+                    dls_upscale_interval=loss_scaling['upscale_interval']
+                    )
+            else:
+                print("Using FP16 without APEX")
+                self.fp_optimizer = AMPPytorchOptimizer(
+                    self.model, grad_clip,
+                    loss_scale=loss_scaling['init_scale'],
+                    dls_upscale_interval=loss_scaling['upscale_interval'],
+                    device_type=self.device_type
+                    )
 
         if self.distributed:
             self.model = DistributedDataParallel(self.model)
@@ -172,14 +200,16 @@ class Seq2SeqTrainer:
         num_toks['tgt'] = int(sum(tgt_length - 1))
         num_toks['src'] = int(sum(src_length))
 
-        if self.batch_first:
-            output = self.model(src, src_length, tgt[:, :-1])
-            tgt_labels = tgt[:, 1:]
-            T, B = output.size(1), output.size(0)
-        else:
-            output = self.model(src, src_length, tgt[:-1])
-            tgt_labels = tgt[1:]
-            T, B = output.size(0), output.size(1)
+        with torch.autocast(self.device_type, enabled=self.autocast, dtype=torch.bfloat16):
+            if self.batch_first:
+                output = self.model(src, src_length, tgt[:, :-1])
+
+                tgt_labels = tgt[:, 1:]
+                T, B = output.size(1), output.size(0)
+            else:
+                output = self.model(src, src_length, tgt[:-1])
+                tgt_labels = tgt[1:]
+                T, B = output.size(0), output.size(1)
 
         loss = self.criterion(output.view(T * B, -1),
                               tgt_labels.contiguous().view(-1))

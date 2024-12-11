@@ -23,8 +23,12 @@ import math
 
 import torch
 from torch.nn.utils import clip_grad_norm_
-import apex.amp._amp_state
-from apex import amp
+
+try:
+    import apex.amp._amp_state
+    from apex import amp
+except:
+    pass
 
 
 class FP16Optimizer:
@@ -125,8 +129,8 @@ class FP16Optimizer:
             norm = clip_grad_norm_(self.fp32_params, self.grad_clip)
 
             if math.isfinite(norm):
-                scheduler.step()
                 optimizer.step()
+                scheduler.step()
                 self.set_weights(self.model.parameters(),
                                  self.fp32_params)
                 self.since_last_invalid += 1
@@ -182,8 +186,10 @@ class FP32Optimizer:
         if update:
             if self.grad_clip != float('inf'):
                 clip_grad_norm_(self.model.parameters(), self.grad_clip)
-            scheduler.step()
+
             optimizer.step()
+            scheduler.step()
+
             self.model.zero_grad()
 
 
@@ -233,6 +239,65 @@ class AMPOptimizer:
         if update:
             if self.grad_clip != float('inf'):
                 clip_grad_norm_(amp.master_params(optimizer), self.grad_clip)
-            scheduler.step()
             optimizer.step()
+
+            scheduler.step()
+            self.model.zero_grad()
+
+
+class AMPPytorchOptimizer:
+    """
+    Optimizer compatible with AMP.
+    Uses AMP to apply loss scaling, computes backward and applies weight
+    update.
+    """
+    def __init__(self, model, grad_clip=None, loss_scale=8192,
+                 dls_upscale_interval=128, device_type: str = 'cuda'):
+        """
+        Constructor for the AMPOptimizer
+
+        :param model: model
+        :param grad_clip: coefficient for gradient clipping, max L2 norm of the
+            gradients
+        """
+        logging.info('Initializing amp optimizer')
+        self.initialize_model(model)
+        self.grad_clip = grad_clip
+
+        self.loss_scale = loss_scale
+        self.dls_upscale_interval = dls_upscale_interval
+        
+        self.scaler = torch.GradScaler(device_type, init_scale=loss_scale)
+
+    def initialize_model(self, model):
+        """
+        Initializes state of the model.
+
+        :param model: model
+        """
+        self.model = model
+        self.model.zero_grad()
+
+    def step(self, loss, optimizer, scheduler, update=True):
+        """
+        Performs one step of the optimizer.
+
+        :param loss: value of loss function
+        :param optimizer: optimizer
+        :param update: if True executes weight update
+        """
+        self.scaler.scale(loss).backward()
+
+        if update:
+            if self.grad_clip != float('inf'):
+                clip_grad_norm_(self.model.parameters(), self.grad_clip)
+
+            self.scaler.step(optimizer)
+            self.scaler.update()
+            # In PyTorch 1.1.0 and later, you should call `optimizer.step()` before `lr_scheduler.step()`.
+            # Failure to do this will result in PyTorch skipping the first value of the
+            # learning rate schedule.
+            # See more details at
+            # https://pytorch.org/docs/stable/optim.html#how-to-adjust-learning-rate
+            scheduler.step()
             self.model.zero_grad()

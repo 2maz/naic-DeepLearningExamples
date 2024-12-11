@@ -149,6 +149,11 @@ def parse_args():
     general.add_argument('--math', default='fp16',
                          choices=['fp16', 'fp32', 'tf32', 'manual_fp16'],
                          help='precision')
+    # to get the best performance
+    # on intel max that should be true
+    # on nvidia (V100) that should be false
+    general.add_argument('--autocast', action='store_true', default=False,
+                         help='if torchautocast should be automatically enabled with amp')
     general.add_argument('--seed', default=None, type=int,
                          help='master seed for random number generators, if \
                          "seed" is undefined then the master seed will be \
@@ -165,6 +170,9 @@ def parse_args():
                                   'socket_unique_continuous',
                                   'disabled'],
                          help='type of CPU affinity')
+    general.add_argument('--device-type', type=str, default='cuda',
+                    help='set the device type, e.g., cuda, hpu, xpu')
+
 
     exclusive_group(group=general, name='eval', default=True,
                     help='run validation and test after every epoch')
@@ -379,8 +387,11 @@ def main():
     training_start = time.time()
     args = parse_args()
     if args.affinity != 'disabled':
-        try:
+        if torch.xpu.is_available():
+            nproc_per_node = torch.xpu.device_count()
+        else:
             nproc_per_node = torch.cuda.device_count()
+        try:
             affinity = gpu_affinity.set_affinity(
                 args.local_rank,
                 nproc_per_node,
@@ -390,7 +401,7 @@ def main():
         except Exception as e:
             logging.warning("gpu_affinity cannot be set -- probably this is a non-NVidia GPU in use")
 
-    device = utils.set_device(args.cuda, args.local_rank)
+    device = utils.set_device(args.device_type, args.local_rank)
     utils.init_distributed(args.cuda)
     args.rank = utils.get_rank()
 
@@ -556,6 +567,8 @@ def main():
         translator=translator,
         prealloc_mode=args.prealloc_mode,
         warmup=args.warmup,
+        device_type=args.device_type,
+        autocast=args.autocast
         )
 
     trainer = trainers.Seq2SeqTrainer(**trainer_options)
