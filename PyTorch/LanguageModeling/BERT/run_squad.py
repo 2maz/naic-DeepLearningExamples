@@ -1,5 +1,5 @@
 # coding=utf-8
-# Copyright (c) 2019-2021 NVIDIA CORPORATION. All rights reserved.
+# Copyright (c) 2019 NVIDIA CORPORATION. All rights reserved.
 # Copyright 2018 The Google AI Language Team Authors and The HugginFace Inc. team.
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -26,16 +26,15 @@ import os
 import random
 import sys
 from io import open
-from pathlib import Path
 
 import numpy as np
 import torch
+from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import (DataLoader, RandomSampler, SequentialSampler,
                               TensorDataset)
 from torch.utils.data.distributed import DistributedSampler
 from tqdm import tqdm, trange
 
-from apex import amp
 from schedulers import LinearWarmUpScheduler
 from file_utils import PYTORCH_PRETRAINED_BERT_CACHE
 import modeling
@@ -476,7 +475,7 @@ def get_answers(examples, features, results, args):
 
         # In very rare edge cases we could only have single null prediction.
         # So we just create a nonce prediction in this case to avoid failure.
-        if not nbest:
+        if not nbest:                                                    
             nbest.append(Prediction(text="empty", start_logit=0.0, end_logit=0.0))
 
         total_scores = []
@@ -524,7 +523,7 @@ def get_answer_text(example, feature, pred, args):
     return final_text
 
 def get_valid_prelim_predictions(start_indices, end_indices, feature, result, args):
-
+    
     _PrelimPrediction = collections.namedtuple(
         "PrelimPrediction",
         ["start_index", "end_index", "start_logit", "end_logit"])
@@ -697,33 +696,6 @@ def _compute_softmax(scores):
         probs.append(score / total_sum)
     return probs
 
-
-
-from apex.multi_tensor_apply import multi_tensor_applier
-class GradientClipper:
-    """
-    Clips gradient norm of an iterable of parameters.
-    """
-    def __init__(self, max_grad_norm):
-        self.max_norm = max_grad_norm
-        if multi_tensor_applier.available:
-            import amp_C
-            self._overflow_buf = torch.cuda.IntTensor([0])
-            self.multi_tensor_l2norm = amp_C.multi_tensor_l2norm
-            self.multi_tensor_scale = amp_C.multi_tensor_scale
-        else:
-            raise RuntimeError('Gradient clipping requires cuda extensions')
-
-    def step(self, parameters):
-        l = [p.grad for p in parameters if p.grad is not None]
-        total_norm, _ = multi_tensor_applier(self.multi_tensor_l2norm, self._overflow_buf, [l], False)
-        total_norm = total_norm.item()
-        if (total_norm == float('inf')): return
-        clip_coef = self.max_norm / (total_norm + 1e-6)
-        if clip_coef < 1:
-            multi_tensor_applier(self.multi_tensor_scale, self._overflow_buf, [l, l], clip_coef)
-
-
 def main():
     parser = argparse.ArgumentParser()
 
@@ -741,6 +713,7 @@ def main():
                         help="The checkpoint file from pretraining")
 
     ## Other parameters
+    parser.add_argument("--device-type", default="cuda", type=str)
     parser.add_argument("--train_file", default=None, type=str, help="SQuAD json for training. E.g., train-v1.1.json")
     parser.add_argument("--predict_file", default=None, type=str,
                         help="SQuAD json for predictions. E.g., dev-v1.1.json or test-v1.1.json")
@@ -850,40 +823,34 @@ def main():
                         default=None,
                         type=str,
                         help="Location to cache train feaures. Will default to the dataset directory")
-    parser.add_argument("--profile",
-                        default=False,
-                        action='store_true',
-                        help="Whether to profile model.")
 
     args = parser.parse_args()
-    args.fp16 = args.fp16 or args.amp
+    args.fp16 = args.fp16 or args.amp    
 
     if args.local_rank == -1 or args.no_cuda:
         device = torch.device("cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu")
         n_gpu = torch.cuda.device_count()
     else:
-        torch.cuda.set_device(args.local_rank)
-        device = torch.device("cuda", args.local_rank)
-        # Initializes the distributed backend which will take care of sychronizing nodes/GPUs
-        torch.distributed.init_process_group(backend='nccl', init_method='env://')
+        if torch.cuda.is_available():
+            torch.cuda.set_device(args.local_rank)
+            device = torch.device("cuda", args.local_rank)
+            # Initializes the distributed backend which will take care of sychronizing nodes/GPUs
+            torch.distributed.init_process_group(backend='nccl', init_method='env://')
+        elif torch.xpu.is_available():
+            torch.xpu.set_device(args.local_rank)
+            device = torch.device(args.device_type, args.local_rank)
+            # Initializes the distributed backend which will take care of sychronizing nodes/GPUs
+            torch.distributed.init_process_group(backend='gloo', init_method='env://')
+
         n_gpu = 1
 
     if is_main_process():
-        Path(os.path.dirname(args.json_summary)).mkdir(parents=True, exist_ok=True)
         dllogger.init(backends=[dllogger.JSONStreamBackend(verbosity=dllogger.Verbosity.VERBOSE,
                                                            filename=args.json_summary),
                                 dllogger.StdOutBackend(verbosity=dllogger.Verbosity.VERBOSE, step_format=format_step)])
     else:
         dllogger.init(backends=[])
-    
-    dllogger.metadata("e2e_train_time", {"unit": "s"})
-    dllogger.metadata("training_sequences_per_second", {"unit": "sequences/s"})
-    dllogger.metadata("final_loss", {"unit": None})
-    dllogger.metadata("e2e_inference_time", {"unit": "s"})
-    dllogger.metadata("inference_sequences_per_second", {"unit": "sequences/s"})
-    dllogger.metadata("exact_match", {"unit": None})
-    dllogger.metadata("F1", {"unit": None})
-
+        
     print("device: {} n_gpu: {}, distributed training: {}, 16-bits training: {}".format(
                                 device, n_gpu, bool(args.local_rank != -1), args.fp16))
 
@@ -939,13 +906,12 @@ def main():
     if config.vocab_size % 8 != 0:
         config.vocab_size += 8 - (config.vocab_size % 8)
 
+    # modeling.ACT2FN["bias_gelu"] = modeling.bias_gelu_training
     model = modeling.BertForQuestionAnswering(config)
     # model = modeling.BertForQuestionAnswering.from_pretrained(args.bert_model,
                 # cache_dir=os.path.join(str(PYTORCH_PRETRAINED_BERT_CACHE), 'distributed_{}'.format(args.local_rank)))
     dllogger.log(step="PARAMETER", data={"loading_checkpoint": True})
-    checkpoint = torch.load(args.init_checkpoint, map_location='cpu')
-    checkpoint = checkpoint["model"] if "model" in checkpoint.keys() else checkpoint
-    model.load_state_dict(checkpoint, strict=False)
+    # model.load_state_dict(torch.load(args.init_checkpoint, map_location='cpu')["model"], strict=False)
     dllogger.log(step="PARAMETER", data={"loaded_checkpoint": True})
     model.to(device)
     num_weights = sum([p.numel() for p in model.parameters() if p.requires_grad])
@@ -965,20 +931,9 @@ def main():
     ]
     if args.do_train:
         if args.fp16:
-            try:
-                from apex.optimizers import FusedAdam
-            except ImportError:
-                raise ImportError(
-                    "Please install apex from https://www.github.com/nvidia/apex to use distributed and fp16 training.")
-            optimizer = FusedAdam(optimizer_grouped_parameters,
-                                  lr=args.learning_rate,
-                                  bias_correction=False)
-
-            if args.loss_scale == 0:
-                model, optimizer = amp.initialize(model, optimizer, opt_level="O2", keep_batchnorm_fp32=False,
-                                                      loss_scale="dynamic")
-            else:
-                model, optimizer = amp.initialize(model, optimizer, opt_level="O2", keep_batchnorm_fp32=False, loss_scale=args.loss_scale)
+            optimizer = torch.optim.AdamW(optimizer_grouped_parameters,
+                              lr=args.learning_rate,
+                              fused=(True and args.device_type != "xpu"))
             if args.do_train:
                 scheduler = LinearWarmUpScheduler(optimizer, warmup=args.warmup_proportion, total_steps=num_train_optimization_steps)
 
@@ -988,13 +943,9 @@ def main():
                                     warmup=args.warmup_proportion,
                                     t_total=num_train_optimization_steps)
 
-    if args.local_rank != -1:
-        try:
-            from apex.parallel import DistributedDataParallel as DDP
-        except ImportError:
-            raise ImportError(
-                "Please install apex from https://www.github.com/nvidia/apex to use distributed and fp16 training.")
-
+    if n_gpu == 1:
+        pass
+    elif args.local_rank != -1:
         model = DDP(model)
     elif n_gpu > 1:
         model = torch.nn.DataParallel(model)
@@ -1048,61 +999,60 @@ def main():
         train_dataloader = DataLoader(train_data, sampler=train_sampler, batch_size=args.train_batch_size * n_gpu)
 
         model.train()
-        gradClipper = GradientClipper(max_grad_norm=1.0)
-        final_loss = None
+        scaler = torch.GradScaler()
 
+        final_loss = None
         train_start = time.time()
         for epoch in range(int(args.num_train_epochs)):
             train_iter = tqdm(train_dataloader, desc="Iteration", disable=args.disable_progress_bar) if is_main_process() else train_dataloader
             for step, batch in enumerate(train_iter):
                 # Terminate early for benchmarking
-
+                
                 if args.max_steps > 0 and global_step > args.max_steps:
                     break
 
                 if n_gpu == 1:
                     batch = tuple(t.to(device) for t in batch)  # multi-gpu does scattering it-self
                 input_ids, input_mask, segment_ids, start_positions, end_positions = batch
-                start_logits, end_logits = model(input_ids, segment_ids, input_mask)
-                # If we are on multi-GPU, split add a dimension
-                if len(start_positions.size()) > 1:
-                    start_positions = start_positions.squeeze(-1)
-                if len(end_positions.size()) > 1:
-                    end_positions = end_positions.squeeze(-1)
-                # sometimes the start/end positions are outside our model inputs, we ignore these terms
-                ignored_index = start_logits.size(1)
-                start_positions.clamp_(0, ignored_index)
-                end_positions.clamp_(0, ignored_index)
+                with torch.autocast(args.device_type, enabled=args.amp, dtype=torch.bfloat16):
+                    start_logits, end_logits = model(input_ids, segment_ids, input_mask)
+                    # If we are on multi-GPU, split add a dimension
+                    if len(start_positions.size()) > 1:
+                        start_positions = start_positions.squeeze(-1)
+                    if len(end_positions.size()) > 1:
+                        end_positions = end_positions.squeeze(-1)
+                    # sometimes the start/end positions are outside our model inputs, we ignore these terms
+                    ignored_index = start_logits.size(1)
+                    start_positions.clamp_(0, ignored_index)
+                    end_positions.clamp_(0, ignored_index)
 
-                loss_fct = torch.nn.CrossEntropyLoss(ignore_index=ignored_index)
-                start_loss = loss_fct(start_logits, start_positions)
-                end_loss = loss_fct(end_logits, end_positions)
-                loss = (start_loss + end_loss) / 2
+                    loss_fct = torch.nn.CrossEntropyLoss(ignore_index=ignored_index)
+                    start_loss = loss_fct(start_logits, start_positions)
+                    end_loss = loss_fct(end_logits, end_positions)
+                    loss = (start_loss + end_loss) / 2
+
                 if n_gpu > 1:
                     loss = loss.mean()  # mean() to average on multi-gpu.
                 if args.gradient_accumulation_steps > 1:
                     loss = loss / args.gradient_accumulation_steps
-                if args.fp16:
-                    with amp.scale_loss(loss, optimizer) as scaled_loss:
-                        scaled_loss.backward()
-                else:
-                    loss.backward()
 
-                # gradient clipping
-                gradClipper.step(amp.master_params(optimizer))
-
+                scaler.scale(loss).backward()
+                
                 if (step + 1) % args.gradient_accumulation_steps == 0:
                     if args.fp16 :
                         # modify learning rate with special warm up for BERT which FusedAdam doesn't do
                         scheduler.step()
-                    optimizer.step()
+                    scaler.step(optimizer)
+                    scaler.update()
+
                     optimizer.zero_grad()
                     global_step += 1
 
                 final_loss = loss.item()
                 if step % args.log_freq == 0:
                     dllogger.log(step=(epoch, global_step,), data={"step_loss": final_loss,
-                                                                "learning_rate": optimizer.param_groups[0]['lr']})
+                                                                   "learning_rate": optimizer.param_groups[0]['lr']})
+
         time_to_train = time.time() - train_start
 
     if args.do_train and is_main_process() and not args.skip_checkpoint:
@@ -1161,8 +1111,8 @@ def main():
                 eval_feature = eval_features[example_index.item()]
                 unique_id = int(eval_feature.unique_id)
                 all_results.append(RawResult(unique_id=unique_id,
-                                            start_logits=start_logits,
-                                            end_logits=end_logits))
+                                             start_logits=start_logits,
+                                             end_logits=end_logits))
 
         time_to_infer = time.time() - infer_start
         output_prediction_file = os.path.join(args.output_dir, "predictions.json")
