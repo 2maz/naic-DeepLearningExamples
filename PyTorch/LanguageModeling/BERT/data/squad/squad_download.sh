@@ -13,9 +13,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+DIR_DATA=${1:-"/data/squad"}
+
+echo $DIR_DATA
 echo "Downloading dataset for squad..."
 
 # Download SQuAD
+
+pushd .
+cd $DIR_DATA
 
 v1="v1.1"
 mkdir $v1
@@ -70,4 +76,8 @@ if [ "$EXP_EVAL_v2" != "$CALC_EVAL_v2" ]; then
     echo "evaluate-v2.0.py is corrupted! md5sum doesn't match"
 fi
 
+
+popd
+
 echo "Complete!"
+

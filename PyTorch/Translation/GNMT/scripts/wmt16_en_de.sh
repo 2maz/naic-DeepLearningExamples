@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Copyright (c) 2018-2020, NVIDIA CORPORATION. All rights reserved.
+# Copyright (c) 2018-2019, NVIDIA CORPORATION. All rights reserved.
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
@@ -46,14 +46,6 @@ OUTPUT_DIR_DATA="${OUTPUT_DIR}/data"
 
 mkdir -p $OUTPUT_DIR_DATA
 
-echo "Downloading Europarl v7. This may take a while..."
-wget -nc -nv -O ${OUTPUT_DIR_DATA}/europarl-v7-de-en.tgz \
-  http://www.statmt.org/europarl/v7/de-en.tgz
-
-echo "Downloading Common Crawl corpus. This may take a while..."
-wget -nc -nv -O ${OUTPUT_DIR_DATA}/common-crawl.tgz \
-  http://www.statmt.org/wmt13/training-parallel-commoncrawl.tgz
-
 echo "Downloading News Commentary v11. This may take a while..."
 wget -nc -nv -O ${OUTPUT_DIR_DATA}/nc-v11.tgz \
   http://data.statmt.org/wmt16/translation-task/training-parallel-nc-v11.tgz
@@ -66,27 +58,19 @@ wget -nc -nv -O  ${OUTPUT_DIR_DATA}/test.tgz \
 
 # Extract everything
 echo "Extracting all files..."
-mkdir -p "${OUTPUT_DIR_DATA}/europarl-v7-de-en"
-tar -xvzf "${OUTPUT_DIR_DATA}/europarl-v7-de-en.tgz" -C "${OUTPUT_DIR_DATA}/europarl-v7-de-en"
-mkdir -p "${OUTPUT_DIR_DATA}/common-crawl"
-tar -xvzf "${OUTPUT_DIR_DATA}/common-crawl.tgz" -C "${OUTPUT_DIR_DATA}/common-crawl"
 mkdir -p "${OUTPUT_DIR_DATA}/nc-v11"
-tar -xvzf "${OUTPUT_DIR_DATA}/nc-v11.tgz" -C "${OUTPUT_DIR_DATA}/nc-v11"
+tar -xvzf "${OUTPUT_DIR_DATA}/nc-v11.tgz" --no-same-owner -C "${OUTPUT_DIR_DATA}/nc-v11"
 mkdir -p "${OUTPUT_DIR_DATA}/dev"
-tar -xvzf "${OUTPUT_DIR_DATA}/dev.tgz" -C "${OUTPUT_DIR_DATA}/dev"
+tar -xvzf "${OUTPUT_DIR_DATA}/dev.tgz" --no-same-owner -C "${OUTPUT_DIR_DATA}/dev"
 mkdir -p "${OUTPUT_DIR_DATA}/test"
-tar -xvzf "${OUTPUT_DIR_DATA}/test.tgz" -C "${OUTPUT_DIR_DATA}/test"
+tar -xvzf "${OUTPUT_DIR_DATA}/test.tgz" --no-same-owner -C "${OUTPUT_DIR_DATA}/test"
 
 # Concatenate Training data
-cat "${OUTPUT_DIR_DATA}/europarl-v7-de-en/europarl-v7.de-en.en" \
-  "${OUTPUT_DIR_DATA}/common-crawl/commoncrawl.de-en.en" \
-  "${OUTPUT_DIR_DATA}/nc-v11/training-parallel-nc-v11/news-commentary-v11.de-en.en" \
+cat "${OUTPUT_DIR_DATA}/nc-v11/training-parallel-nc-v11/news-commentary-v11.de-en.en" \
   > "${OUTPUT_DIR}/train.en"
 wc -l "${OUTPUT_DIR}/train.en"
 
-cat "${OUTPUT_DIR_DATA}/europarl-v7-de-en/europarl-v7.de-en.de" \
-  "${OUTPUT_DIR_DATA}/common-crawl/commoncrawl.de-en.de" \
-  "${OUTPUT_DIR_DATA}/nc-v11/training-parallel-nc-v11/news-commentary-v11.de-en.de" \
+cat "${OUTPUT_DIR_DATA}/nc-v11/training-parallel-nc-v11/news-commentary-v11.de-en.de" \
   > "${OUTPUT_DIR}/train.de"
 wc -l "${OUTPUT_DIR}/train.de"
 
