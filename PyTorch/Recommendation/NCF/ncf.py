@@ -29,8 +29,13 @@
 # limitations under the License.
 
 import torch.jit
-from apex.optimizers import FusedAdam
+try:
+    from apex.optimizers import FusedAdam
+except:
+    from torch.optim import Adam as FusedAdam
+
 import os
+import sys
 import math
 import time
 import numpy as np
@@ -47,8 +52,11 @@ from neumf_constants import USER_CHANNEL_NAME, ITEM_CHANNEL_NAME, LABEL_CHANNEL_
 
 import dllogger
 
-from apex.parallel import DistributedDataParallel as DDP
-from apex import amp
+try:
+    from apex.parallel import DistributedDataParallel as DDP
+    from apex import amp
+except:
+    from torch.nn.parallel import DistributedDataParallel as DDP
 
 
 def parse_args():
@@ -101,6 +109,9 @@ def parse_args():
     parser.add_argument('--amp', action='store_true', help='Enable mixed precision training')
     parser.add_argument('--log_path', default='log.json', type=str,
                         help='Path for the JSON training log')
+    parser.add_argument('--device-type', type=str, default='cuda', help='set device type')
+    parser.add_argument('--autocast', action='store_true', 
+                        help='use autocast with mixed integer precision')
     return parser.parse_args()
 
 
@@ -124,7 +135,10 @@ def init_distributed(args):
         args.local_rank = 0
 
 
-def val_epoch(model, dataloader: dataloading.TestDataLoader, k, distributed=False, world_size=1):
+def val_epoch(model, dataloader: dataloading.TestDataLoader, k, distributed=False,
+        world_size=1, 
+        device_type: str = 'cuda',
+        autocast: bool = False):
     model.eval()
     user_feature_name = dataloader.channel_spec[USER_CHANNEL_NAME][0]
     item_feature_name = dataloader.channel_spec[ITEM_CHANNEL_NAME][0]
@@ -137,7 +151,9 @@ def val_epoch(model, dataloader: dataloading.TestDataLoader, k, distributed=Fals
             user_batch = batch_dict[USER_CHANNEL_NAME][user_feature_name]
             item_batch = batch_dict[ITEM_CHANNEL_NAME][item_feature_name]
             label_batch = batch_dict[LABEL_CHANNEL_NAME][label_feature_name]
-            prediction_batch = model(user_batch, item_batch, sigmoid=True).detach()
+
+            with torch.autocast(device_type, enabled=autocast, dtype=torch.bfloat16):
+                prediction_batch = model(user_batch, item_batch, sigmoid=True).detach()
 
             loss_batch = torch.nn.functional.binary_cross_entropy(input=prediction_batch.reshape([-1]),
                                                                   target=label_batch)
@@ -216,7 +232,12 @@ def main():
     # sync workers before timing
     if args.distributed:
         torch.distributed.broadcast(torch.tensor([1], device="cuda"), 0)
-    torch.cuda.synchronize()
+
+    if args.device_type == 'cuda':
+        torch.cuda.synchronize()
+    elif args.device_type == 'xpu':
+        torch.xpu.synchronize()
+
 
     main_start_time = time.time()
 
@@ -245,15 +266,20 @@ def main():
 
     criterion = nn.BCEWithLogitsLoss(reduction='none')  # use torch.mean() with dim later to avoid copy to host
     # Move model and loss to GPU
-    model = model.cuda()
-    criterion = criterion.cuda()
+    model = model.to(args.device_type)
+    criterion = criterion.to(args.device_type)
 
+    autocast = False
     if args.amp:
-        model, optimizer = amp.initialize(model, optimizer, opt_level="O2",
-                                          keep_batchnorm_fp32=False, loss_scale='dynamic')
+        if "apex" in sys.modules:
+            model, optimizer = amp.initialize(model, optimizer, opt_level="O2",
+                                              keep_batchnorm_fp32=False, loss_scale='dynamic')
+        if args.autocast:
+            autocast = True
 
     if args.distributed:
         model = DDP(model)
+
 
     local_batch = args.batch_size // args.world_size
     traced_criterion = torch.jit.trace(criterion.forward,
@@ -270,7 +296,11 @@ def main():
     if args.mode == 'test':
         start = time.time()
         hr, ndcg, val_loss = val_epoch(model, test_loader, args.topk,
-                                       distributed=args.distributed, world_size=args.world_size)
+                                       distributed=args.distributed,
+                                       world_size=args.world_size,
+                                       device_type=args.device_type,
+                                       autocast=autocast
+                                       )
         val_time = time.time() - start
         eval_size = test_loader.raw_dataset_length
         eval_throughput = eval_size / val_time
@@ -307,11 +337,13 @@ def main():
                 label_features = batch_dict[LABEL_CHANNEL_NAME]
                 label_batch = label_features[label_feature_name]
 
-                outputs = model(user_batch, item_batch)
+                with torch.autocast(args.device_type, enabled=autocast, dtype=torch.bfloat16):
+                    outputs = model(user_batch, item_batch)
+
                 loss = traced_criterion(outputs, label_batch.view(-1, 1)).float()
                 loss = torch.mean(loss.view(-1), 0)
 
-                if args.amp:
+                if args.amp and args.device_type == "cuda":
                     with amp.scale_loss(loss, optimizer) as scaled_loss:
                         scaled_loss.backward()
                 else:

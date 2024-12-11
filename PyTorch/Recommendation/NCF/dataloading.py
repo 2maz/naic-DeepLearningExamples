@@ -43,6 +43,9 @@ class TorchTensorDataset:
         self.mapping_name = mapping_name
         self.features = dict()
         self.feature_spec = feature_spec
+        self.device_type = args.device_type
+        self.device = f'{self.device_type}:{self.local_rank}'
+
         self._load_features()
 
     def _load_features(self):
@@ -53,7 +56,8 @@ class TorchTensorDataset:
             assert len(files_list) == 1, "Only one file per chunk supported in this loader"
             file_relative_path = files_list[0]
             path_to_load = os.path.join(self.feature_spec.base_directory, file_relative_path)
-            chunk_data = torch.load(path_to_load, map_location=torch.device('cuda:{}'.format(self.local_rank)))
+
+            chunk_data = torch.load(path_to_load, map_location=torch.device(self.device))
             running_pos = 0
             for feature_name in chunk['features']:
                 next_running_pos = running_pos + 1
@@ -194,6 +198,7 @@ class TrainDataloader:
         self.samples_begin = int(samples_per_worker * args.local_rank)
         self.samples_end = int(samples_per_worker * (args.local_rank + 1))
 
+        self.device_type = args.device_type
     def _build_channel_dict(self):
         for channel_name, channel_features in self.channel_spec.items():
             channel_tensors = dict()
@@ -237,7 +242,8 @@ class TrainDataloader:
 
         # Labels are not shuffled between cards.
         # This replicates previous behaviour.
-        epoch_indices = torch.randperm(self.samples_end - self.samples_begin, device='cuda:{}'.format(self.local_rank))
+        device = f'{self.device_type}:{self.local_rank}'
+        epoch_indices = torch.randperm(self.samples_end - self.samples_begin, device=device)
         epoch_indices += self.samples_begin
 
         batches = None
