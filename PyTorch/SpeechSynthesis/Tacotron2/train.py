@@ -175,16 +175,27 @@ def reduce_tensor(tensor, num_gpus):
 
 
 def init_distributed(args, world_size, rank, group_name):
-    assert torch.cuda.is_available(), "Distributed mode requires CUDA."
-    print("Initializing Distributed")
+    if torch.cuda.is_available():
+        assert torch.cuda.is_available(), "Distributed mode requires CUDA."
+        print("Initializing Distributed for cuda")
 
-    # Set cuda device so everything is done on the right GPU.
-    torch.cuda.set_device(rank % torch.cuda.device_count())
+        # Set cuda device so everything is done on the right GPU.
+        torch.cuda.set_device(rank % torch.cuda.device_count())
 
-    # Initialize distributed communication
-    dist.init_process_group(
-        backend=args.dist_backend, init_method=args.dist_url,
-        world_size=world_size, rank=rank, group_name=group_name)
+        # Initialize distributed communication
+        dist.init_process_group(
+            backend=args.dist_backend, init_method=args.dist_url,
+            world_size=world_size, rank=rank, group_name=group_name)
+    elif torch.xpu.is_available():
+        print("Initializing Distributed for xpu")
+
+        # Set device so everything is done on the right GPU.
+        torch.xpu.set_device(rank % torch.xpu.device_count())
+
+        # Initialize distributed communication -- needs to be 'gloo'
+        dist.init_process_group(
+            backend="gloo", init_method=args.dist_url,
+            world_size=world_size, rank=rank, group_name=group_name)
 
     print("Done initializing distributed")
 
