@@ -98,6 +98,7 @@ CMD+=" --config_file=$CONFIG_FILE "
 CMD+=" --max_steps=$max_steps "
 CMD+=" $use_fp16"
 CMD+=" --device-type $gpu_device_type"
+CMD+=" --json-summary $OUT_DIR/dllogger.json"
 
 LOGFILE=$OUT_DIR/logfile.txt
 echo "$CMD |& tee $LOGFILE"
