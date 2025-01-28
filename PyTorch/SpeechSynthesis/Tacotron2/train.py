@@ -391,6 +391,9 @@ def main():
 
     distributed_run = world_size > 1
 
+    if not os.path.exists(args.output):
+        os.makedirs(name=args.output, exist_ok=True)
+
     if args.seed is not None:
         torch.manual_seed(args.seed + local_rank)
         np.random.seed(args.seed + local_rank)
