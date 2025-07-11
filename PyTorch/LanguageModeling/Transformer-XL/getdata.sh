@@ -29,11 +29,12 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 SCRIPT_DIR=$(realpath -L $(dirname $0))
+DATA_DIR=${1:-/data}
 
 echo "=== Acquiring datasets ==="
 echo "---"
 
-cd /data/transformer-xl
+cd $DATA_DIR/transformer-xl
 
 #if [[ ! -d 'wikitext-2' ]]; then
 #    echo "- Downloading WikiText-2 (WT2)"
@@ -47,9 +48,18 @@ cd /data/transformer-xl
 #fi
 
 echo "- Downloading WikiText-103 (WT2)"
-if [[ ! -d 'wikitext-100' ]]; then
+if [[ ! -d 'wikitext-103' ]]; then
+    echo "  - creating virtual env"
+    python3 -m venv venv-dataset
+    source ./venv-dataset/bin/activate
     pip install datasets
-    python $SCRIPT_DIR/get_wikitext.py --target-dir /data/transformer-xl/wikitext-100
+
+    python $SCRIPT_DIR/get_wikitext.py --target-dir $DATA_DIR/transformer-xl/wikitext-103
+
+    deactivate
+    echo "  - removing virtual env"
+    rm -rf venv-dataset
+
 
     #wget --continue https://s3.amazonaws.com/research.metamind.io/wikitext/wikitext-103-v1.zip
     #unzip -q wikitext-103-v1.zip
