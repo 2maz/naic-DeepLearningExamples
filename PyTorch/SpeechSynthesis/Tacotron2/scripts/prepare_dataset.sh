@@ -2,7 +2,7 @@
 
 set -e
 
-DATADIR=${1:-"/data/tacotron2/LJSpeech-1.1"}
+DATADIR=${1:-"/data/tacotron2"}
 BZ2ARCHIVE="LJSpeech-1.1.tar.bz2"
 ENDPOINT="http://data.keithito.com/data/speech/$BZ2ARCHIVE"
 
