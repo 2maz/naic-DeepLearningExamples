@@ -14,26 +14,40 @@
 
 import torch
 import torch.nn as nn
-from torchvision.models.resnet import resnet18, resnet34, resnet50, resnet101, resnet152
+from torchvision.models.resnet import (
+    resnet18,
+    ResNet18_Weights,
+    resnet34,
+    ResNet34_Weights,
+    resnet50,
+    ResNet50_Weights,
+    resnet101,
+    ResNet101_Weights,
+    resnet152,
+    ResNet152_Weights,
+)
 
 
 class ResNet(nn.Module):
     def __init__(self, backbone='resnet50', backbone_path=None):
         super().__init__()
+        # using pretrained=not backbone_path has been deprecate in 0.13
+        # using weights instead:  
+        # see https://docs.pytorch.org/vision/main/models/generated/torchvision.models.resnet50.html
         if backbone == 'resnet18':
-            backbone = resnet18(pretrained=not backbone_path)
+            backbone = resnet18(weights=ResNet18_Weights.DEFAULT)
             self.out_channels = [256, 512, 512, 256, 256, 128]
         elif backbone == 'resnet34':
-            backbone = resnet34(pretrained=not backbone_path)
+            backbone = resnet34(weights=ResNet34_Weights.DEFAULT)
             self.out_channels = [256, 512, 512, 256, 256, 256]
         elif backbone == 'resnet50':
-            backbone = resnet50(pretrained=not backbone_path)
+            backbone = resnet50(weights=ResNet50_Weights.DEFAULT)
             self.out_channels = [1024, 512, 512, 256, 256, 256]
         elif backbone == 'resnet101':
-            backbone = resnet101(pretrained=not backbone_path)
+            backbone = resnet101(weights=ResNet101_Weights.DEFAULT)
             self.out_channels = [1024, 512, 512, 256, 256, 256]
         else:  # backbone == 'resnet152':
-            backbone = resnet152(pretrained=not backbone_path)
+            backbone = resnet152(weights=ResNet152_Weights)
             self.out_channels = [1024, 512, 512, 256, 256, 256]
         if backbone_path:
             backbone.load_state_dict(torch.load(backbone_path))

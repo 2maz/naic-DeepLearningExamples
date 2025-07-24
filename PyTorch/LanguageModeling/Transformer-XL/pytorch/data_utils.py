@@ -302,7 +302,8 @@ def get_lm_corpus(datadir, dataset, vocab):
 
     if os.path.exists(fn):
         logging.info('Loading cached dataset...')
-        corpus = torch.load(fn)
+        # The default of weights_only change in torch 2.6 from False to True
+        corpus = torch.load(fn, weights_only=False)
     else:
         logging.info('Producing dataset {}...'.format(dataset))
         kwargs = {}

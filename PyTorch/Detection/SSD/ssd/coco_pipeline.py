@@ -28,6 +28,11 @@ class COCOPipeline(Pipeline):
                  device_id, num_shards,
                  output_fp16=False, output_nhwc=False, pad_output=False,
                  num_threads=1, seed=15):
+
+        # The use of negative seed to use automatic seed asignment is deprecated. Use `None` instead.
+        if seed < 0:
+            seed = None
+
         super(COCOPipeline, self).__init__(batch_size=batch_size,
                                            device_id=device_id,
                                            num_threads=num_threads,

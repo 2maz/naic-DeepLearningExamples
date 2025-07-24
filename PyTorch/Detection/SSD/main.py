@@ -261,6 +261,7 @@ if __name__ == "__main__":
     if args.local_rank == 0:
         os.makedirs('./models', exist_ok=True)
 
+
     torch.backends.cudnn.benchmark = True
 
     # write json only on the main thread
