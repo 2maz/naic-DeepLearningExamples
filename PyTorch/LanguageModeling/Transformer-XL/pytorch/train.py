@@ -1116,6 +1116,9 @@ def main():
     else:
         best_val_perplexity = None
 
+    if torch.distributed.is_initialized():
+        torch.distributed.destroy_process_group()
+
     summary.update({
         'train_throughput': meters['train_throughput'].avg,
         'train_elapsed': elapsed / 60,

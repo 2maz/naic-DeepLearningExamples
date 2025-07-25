@@ -645,8 +645,8 @@ def main():
                                      (train_epoch_items_per_sec/num_iters if num_iters > 0 else 0.0)})
     DLLogger.log(step=tuple(), data={'val_items_per_sec': val_items_per_sec})
 
-    if distributed_run:
-        dist.destroy_process_group()
+    if torch.distributed.is_initialized():
+        torch.distributed.destroy_process_group()
 
     if local_rank == 0:
         DLLogger.flush()
