@@ -1144,6 +1144,7 @@ def main():
         gpu_count = n_gpu
         if torch.distributed.is_initialized():
             gpu_count = torch.distributed.get_world_size()
+            torch.distributed.destroy_process_group()
 
         if args.max_steps == -1:
             dllogger.log(step=tuple(), data={"e2e_train_time": time_to_train,
