@@ -67,7 +67,7 @@ def make_parser():
                         help='manually set random seed for torch')
     parser.add_argument('--checkpoint', type=str, default=None,
                         help='path to model checkpoint file')
-    parser.add_argument('--save', type=str, default=None,
+    parser.add_argument('--save', type=str, default="./models",
                         help='save model checkpoints in the specified directory')
     parser.add_argument('--mode', type=str, default='training',
                         choices=['training', 'evaluation', 'benchmark-training', 'benchmark-inference'])
@@ -259,7 +259,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
     args.local_rank = int(os.environ.get('LOCAL_RANK', args.local_rank))
     if args.local_rank == 0:
-        os.makedirs('./models', exist_ok=True)
+        os.makedirs(args.save, exist_ok=True)
 
 
     torch.backends.cudnn.benchmark = True
