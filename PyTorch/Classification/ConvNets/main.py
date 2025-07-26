@@ -69,6 +69,7 @@ from image_classification.optimizers import (
 from image_classification.gpu_affinity import set_affinity, AffinityMode
 import dllogger
 import logging
+from pathlib import Path
 
 
 def available_models():
@@ -551,6 +552,9 @@ def prepare_for_training(args, model_args, model_arch):
     )
 
     if not torch.distributed.is_initialized() or torch.distributed.get_rank() == 0:
+        raport_file = Path(args.workspace) / args.raport_file
+        raport_file.resolve().parent.mkdir(exist_ok=True, parents=True)
+
         logger = log.Logger(
             args.print_freq,
             [
@@ -559,7 +563,7 @@ def prepare_for_training(args, model_args, model_arch):
                 ),
                 dllogger.JSONStreamBackend(
                     dllogger.Verbosity.VERBOSE,
-                    os.path.join(args.workspace, args.raport_file),
+                    str(raport_file),
                 ),
             ],
             start_epoch=start_epoch - 1,
