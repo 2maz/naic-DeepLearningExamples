@@ -75,6 +75,7 @@ import os
 import socket
 import time
 from argparse import ArgumentParser, REMAINDER
+from pathlib import Path
 
 import torch
 
@@ -130,6 +131,13 @@ def parse_args():
         "training",
     )
 
+    parser.add_argument(
+        "--log-dir",
+        default="/tmp",
+        type=str,
+        help="Logging directory"
+    )
+
     # positional
     parser.add_argument(
         "training_script",
@@ -159,6 +167,10 @@ def main():
 
     processes = []
 
+
+    log_dir = Path(args.log_dir)
+    log_dir.mkdir(parents=True, exist_ok=True)
+
     for local_rank in range(0, args.nproc_per_node):
         # each process's rank
         dist_rank = args.nproc_per_node * args.node_rank + local_rank
@@ -169,9 +181,10 @@ def main():
         cmd = [sys.executable, "-u", args.training_script] + args.training_script_args
 
         print(cmd)
+        gpu_log =  log_dir / f"GPU_{local_rank}.log"
 
         stdout = (
-            None if local_rank == 0 else open("GPU_" + str(local_rank) + ".log", "w")
+            None if local_rank == 0 else open(gpu_log, "w")
         )
 
         process = subprocess.Popen(cmd, env=current_env, stdout=stdout, stderr=stdout)
