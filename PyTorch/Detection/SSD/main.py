@@ -111,6 +111,9 @@ def make_parser():
                         help='Used for multi-process training. Can either be manually set ' +
                              'or automatically set by using \'python -m multiproc\'.')
 
+    parser.add_argument('--device-type', default='cuda', type=str,
+                        help='Set device-type')
+
     return parser
 
 
@@ -120,11 +123,15 @@ def train(train_loop_func, logger, args):
 
     # Setup multi-GPU if necessary
     args.distributed = False
+
     if 'WORLD_SIZE' in os.environ:
         args.distributed = int(os.environ['WORLD_SIZE']) > 1
 
     if args.distributed:
-        torch.cuda.set_device(args.local_rank)
+        if hasattr(torch, "accelerator"):
+            torch.accelerator.set_device_index(args.local_rank)
+        else:
+            torch.cuda.set_device(args.local_rank)
         torch.distributed.init_process_group(backend='nccl', init_method='env://')
         args.N_gpu = torch.distributed.get_world_size()
     else:
@@ -190,7 +197,8 @@ def train(train_loop_func, logger, args):
             print('Model precision {} mAP'.format(acc))
         return
 
-    scaler = torch.cuda.amp.GradScaler(enabled=args.amp)
+    scaler = torch.amp.GradScaler(args.device_type, enabled=args.amp)
+
     mean, std = generate_mean_std(args)
 
     for epoch in range(start_epoch, args.epochs):

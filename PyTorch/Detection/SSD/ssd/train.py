@@ -16,8 +16,6 @@ from torch.autograd import Variable
 import torch
 import time
 
-from apex import amp
-
 def train_loop(model, loss_func, scaler, epoch, optim, train_dataloader, val_dataloader, encoder, iteration, logger, args, mean, std):
     for nbatch, data in enumerate(train_dataloader):
         img = data[0][0][0]
@@ -43,7 +41,7 @@ def train_loop(model, loss_func, scaler, epoch, optim, train_dataloader, val_dat
         bbox = bbox.view(N, M, 4)
         label = label.view(N, M)
 
-        with torch.cuda.amp.autocast(enabled=args.amp):
+        with torch.autocast(args.device_type, enabled=args.amp):
             ploc, plabel = model(img)
 
             ploc, plabel = ploc.float(), plabel.float()
@@ -100,7 +98,7 @@ def benchmark_train_loop(model, loss_func, scaler, epoch, optim, train_dataloade
         bbox = bbox.view(N, M, 4)
         label = label.view(N, M)
 
-        with torch.cuda.amp.autocast(enabled=args.amp):
+        with torch.autocast(args.device_type, enabled=args.amp):
             ploc, plabel = model(img)
 
             ploc, plabel = ploc.float(), plabel.float()
@@ -154,7 +152,7 @@ def benchmark_inference_loop(model, loss_func, scaler, epoch, optim, train_datal
             if not args.no_cuda:
                 img = img.cuda()
             img.sub_(mean).div_(std)
-            with torch.cuda.amp.autocast(enabled=args.amp):
+            with torch.autocast(args.device_type, enabled=args.amp):
                 _ = model(img)
 
         torch.cuda.synchronize()

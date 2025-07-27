@@ -485,7 +485,7 @@ def prepare_for_training(args, model_args, model_arch):
         else model.arch.default_image_size
     )
 
-    scaler = torch.cuda.amp.GradScaler(
+    scaler = torch.GradScaler(args.device_type,
         init_scale=args.static_loss_scale,
         growth_factor=2,
         backoff_factor=0.5,
