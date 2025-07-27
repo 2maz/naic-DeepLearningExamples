@@ -105,6 +105,13 @@ def add_parser_arguments(parser, skip_arch=False):
         default="bilinear",
         help="interpolation type for resizing images: bilinear, bicubic or triangular(DALI only)",
     )
+    parser.add_argument(
+        "--device_type",
+        type=str,
+        default="cuda",
+        help="Device type, e.g., cpu, cuda, xpu, hpu (default: cuda)"
+    )
+
     if not skip_arch:
         model_names = available_models().keys()
         parser.add_argument(
