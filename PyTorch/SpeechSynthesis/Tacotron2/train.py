@@ -82,6 +82,10 @@ def parse_args(parser):
                           help='Number of total epochs to run')
     training.add_argument('--epochs-per-checkpoint', type=int, default=50,
                           help='Number of epochs per checkpoint')
+    training.add_argument('--no-checkpoints',
+                          action='store_true',
+                          default=False,
+                          help="Disable creation for checkpoint, e.g., for benchmarking")
     training.add_argument('--checkpoint-path', type=str, default='',
                           help='Checkpoint path to resume training')
     training.add_argument('--resume-from-last', action='store_true',
@@ -627,10 +631,11 @@ def main():
                                                args.amp,
                                                args.device_type)
 
-        if (epoch % args.epochs_per_checkpoint == 0) and (args.bench_class == "" or args.bench_class == "train"):
-            save_checkpoint(model, optimizer, scaler, epoch, model_config,
-                            args.output, args.model_name, local_rank, world_size,
-                            device_type=args.device_type)
+        if not args.no_checkpoints:
+            if (epoch % args.epochs_per_checkpoint == 0) and (args.bench_class == "" or args.bench_class == "train"):
+                save_checkpoint(model, optimizer, scaler, epoch, model_config,
+                                args.output, args.model_name, local_rank, world_size,
+                                device_type=args.device_type)
         if local_rank == 0:
             DLLogger.flush()
 
