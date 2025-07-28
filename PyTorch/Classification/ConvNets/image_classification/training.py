@@ -34,7 +34,6 @@ from typing import Callable, Dict, Optional, Tuple
 
 import torch
 import torch.nn as nn
-from torch.cuda.amp import autocast
 from torch.nn.parallel import DistributedDataParallel as DDP
 
 from . import logger as log
@@ -88,7 +87,8 @@ class Executor:
         input: torch.Tensor,
         target: torch.Tensor,
     ) -> torch.Tensor:
-        with autocast(enabled=self.amp):
+        device_type = torch.accelerator.current_accelerator().type
+        with torch.autocast(device_type, enabled=self.amp):
             loss = self.loss(self.model(input), target)
             loss /= self.divide_loss
 
@@ -98,7 +98,8 @@ class Executor:
     def _forward_fn(
         self, input: torch.Tensor, target: torch.Tensor
     ) -> Tuple[torch.Tensor, torch.Tensor]:
-        with torch.no_grad(), autocast(enabled=self.amp):
+        device_type = torch.accelerator.current_accelerator().type
+        with torch.no_grad(), torch.autocast(device_type, enabled=self.amp):
             output = self.model(input)
             loss = None if self.loss is None else self.loss(output, target)
 
