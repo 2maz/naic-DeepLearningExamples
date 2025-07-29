@@ -827,18 +827,21 @@ def main():
     args = parser.parse_args()
     args.fp16 = args.fp16 or args.amp    
 
+    device = torch.device("cpu")
+    n_gpu = 0
+
     if args.local_rank == -1 or args.no_cuda:
-        device = torch.device("cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu")
-        n_gpu = torch.cuda.device_count()
-    else:
-        if torch.cuda.is_available():
-            torch.cuda.set_device(args.local_rank)
-            device = torch.device("cuda", args.local_rank)
+        if torch.accelerator.is_available() and not args.no_cuda:
+            device = torch.accelerator.current_accelerator()
+            n_gpu = torch.accelerator.device_count()
+    elif torch.accelerator.is_available():
+        torch.accelerator.set_device_index(args.local_rank)
+        device = torch.accelerator.current_accelerator()
+
+        if device.type == "cuda":
             # Initializes the distributed backend which will take care of sychronizing nodes/GPUs
             torch.distributed.init_process_group(backend='nccl', init_method='env://')
-        elif torch.xpu.is_available():
-            torch.xpu.set_device(args.local_rank)
-            device = torch.device(args.device_type, args.local_rank)
+        else:
             # Initializes the distributed backend which will take care of sychronizing nodes/GPUs
             torch.distributed.init_process_group(backend='gloo', init_method='env://')
 
@@ -868,7 +871,7 @@ def main():
     dllogger.log(step="PARAMETER", data={"SEED": args.seed})
 
     if n_gpu > 0:
-        torch.cuda.manual_seed_all(args.seed)
+        torch.manual_seed_all(args.seed)
 
     if not args.do_train and not args.do_predict:
         raise ValueError("At least one of `do_train` or `do_predict` must be True.")
