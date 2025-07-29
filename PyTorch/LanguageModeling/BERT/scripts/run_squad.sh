@@ -55,7 +55,7 @@ fi
 # CMD="python  $mpi_command run_squad.py "
 
 unset CUDA_VISIBLE_DEVICES
-mpi_command="torchrun --nproc_per_node=$num_gpu"
+mpi_command="python -m torch.distributed.run --nproc_per_node=$num_gpu"
 CMD="$mpi_command run_squad.py "
 
 CMD+="--init_checkpoint=$init_checkpoint "
