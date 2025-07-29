@@ -47,12 +47,6 @@ from tacotron2_common.utils import ParseFromConfigFile
 import dllogger as DLLogger
 from dllogger import StdOutBackend, JSONStreamBackend, Verbosity
 
-def torch_gpu_synchronize(device_type):
-    if device_type == "cuda":
-        torch.cuda.synchronize()
-    elif device_type == "xpu":
-        torch.xpu.synchronize()
-
 def parse_args(parser):
     """
     Parse commandline arguments.
@@ -179,27 +173,25 @@ def reduce_tensor(tensor, num_gpus):
 
 
 def init_distributed(args, world_size, rank, group_name):
-    if torch.cuda.is_available():
-        assert torch.cuda.is_available(), "Distributed mode requires CUDA."
-        print("Initializing Distributed for cuda")
+    if torch.accelerator.is_available():
+        device_type = torch.accelerator.current_accelerator().type
+        print(f"Initializing Distributed for {device_type}")
 
-        # Set cuda device so everything is done on the right GPU.
-        torch.cuda.set_device(rank % torch.cuda.device_count())
+        local_device_index = rank % torch.accelerator.device_count()
+        torch.accelerator.set_device_index(local_device_index)
 
-        # Initialize distributed communication
-        dist.init_process_group(
-            backend=args.dist_backend, init_method=args.dist_url,
-            world_size=world_size, rank=rank, group_name=group_name)
-    elif torch.xpu.is_available():
-        print("Initializing Distributed for xpu")
-
-        # Set device so everything is done on the right GPU.
-        torch.xpu.set_device(rank % torch.xpu.device_count())
-
-        # Initialize distributed communication -- needs to be 'gloo'
-        dist.init_process_group(
-            backend="gloo", init_method=args.dist_url,
-            world_size=world_size, rank=rank, group_name=group_name)
+        if device_type == "cuda":
+            # Initialize distributed communication
+            dist.init_process_group(
+                backend=args.dist_backend, init_method=args.dist_url,
+                world_size=world_size, rank=rank, group_name=group_name)
+        else:
+            # Initialize distributed communication -- needs to be 'gloo'
+            dist.init_process_group(
+                backend="gloo", init_method=args.dist_url,
+                world_size=world_size, rank=rank, group_name=group_name)
+    else:
+        raise RuntimeError("Distributed mode requires accelerator, but no available")
 
     print("Done initializing distributed")
 
@@ -209,11 +201,7 @@ def save_checkpoint(model, optimizer, scaler, epoch, config, output_dir,
                     device_type: str = "cuda"):
 
     random_rng_state = torch.random.get_rng_state().to(device_type)
-
-    get_rng_state = torch.cuda.get_rng_state
-    if torch.xpu.is_available():
-        get_rng_state = torch.xpu.get_rng_state
-
+    get_rng_state = torch.get_rng_state
     cuda_rng_state = get_rng_state(f"{device_type}:{local_rank}")
 
     random_rng_states_all = [torch.empty_like(random_rng_state) for _ in range(world_size)]
@@ -269,12 +257,9 @@ def load_checkpoint(model, optimizer, scaler, epoch, filepath, local_rank):
     checkpoint = torch.load(filepath, map_location='cpu')
 
     epoch[0] = checkpoint['epoch']+1
-    device_id = local_rank % torch.cuda.device_count()
+    device_id = local_rank % torch.accelerator.device_count()
 
-    set_rng_state = torch.cuda.set_rng_state
-    if torch.xpu.is_available():
-        set_rng_state = torch.xpu.set_rng_state
-
+    set_rng_state = torch.set_rng_state
     set_rng_state(checkpoint['cuda_rng_state_all'][device_id])
 
     if 'random_rng_states_all' in checkpoint:
@@ -320,7 +305,7 @@ def validate(model, criterion, valset, epoch, batch_iter, batch_size,
         num_iters = 0
         val_items_per_sec = 0.0
         for i, batch in enumerate(val_loader):
-            torch_gpu_synchronize(device_type)
+            torch.accelerator.synchronize()
 
             iter_start_time = time.perf_counter()
 
@@ -339,7 +324,7 @@ def validate(model, criterion, valset, epoch, batch_iter, batch_size,
                 reduced_num_items = num_items.item()
             val_loss += reduced_val_loss
 
-            torch_gpu_synchronize(device_type)
+            torch.accelerator.synchronize()
 
             iter_stop_time = time.perf_counter()
             iter_time = iter_stop_time - iter_start_time
@@ -429,7 +414,7 @@ def main():
     if distributed_run:
         init_distributed(args, world_size, local_rank, args.group_name)
 
-    torch_gpu_synchronize(args.device_type)
+    torch.accelerator.synchronize()
 
     run_start_time = time.perf_counter()
 
@@ -502,7 +487,7 @@ def main():
     model.train()
 
     for epoch in range(start_epoch, args.epochs):
-        torch_gpu_synchronize(args.device_type)
+        torch.accelerator.synchronize()
 
         epoch_start_time = time.perf_counter()
         # used to calculate avg items/sec over epoch
@@ -517,7 +502,7 @@ def main():
             train_loader.sampler.set_epoch(epoch)
 
         for i, batch in enumerate(train_loader):
-            torch_gpu_synchronize(args.device_type)
+            torch.accelerator.synchronize()
 
             iter_start_time = time.perf_counter()
             DLLogger.log(step=(epoch, i),
@@ -602,7 +587,7 @@ def main():
 
             model.zero_grad(set_to_none=True)
 
-            torch_gpu_synchronize(args.device_type)
+            torch.accelerator.synchronize()
 
             iter_stop_time = time.perf_counter()
             iter_time = iter_stop_time - iter_start_time
@@ -613,7 +598,7 @@ def main():
             DLLogger.log(step=(epoch, i), data={'train_iter_time': iter_time})
             iteration += 1
 
-        torch_gpu_synchronize(args.device_type)
+        torch.accelerator.synchronize()
 
         epoch_stop_time = time.perf_counter()
         epoch_time = epoch_stop_time - epoch_start_time
@@ -639,7 +624,7 @@ def main():
         if local_rank == 0:
             DLLogger.flush()
 
-    torch_gpu_synchronize(args.device_type)
+    torch.accelerator.synchronize()
 
     run_stop_time = time.perf_counter()
     run_time = run_stop_time - run_start_time
