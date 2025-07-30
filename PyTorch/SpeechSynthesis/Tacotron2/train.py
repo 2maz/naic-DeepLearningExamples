@@ -501,6 +501,9 @@ def main():
         if distributed_run:
             train_loader.sampler.set_epoch(epoch)
 
+        if len(train_loader) == 0:
+            raise RuntimeError("Train loader could not generate a training batch. Please check that batch size <= available data samples")
+
         for i, batch in enumerate(train_loader):
             torch.accelerator.synchronize()
 
