@@ -871,7 +871,7 @@ def main():
     dllogger.log(step="PARAMETER", data={"SEED": args.seed})
 
     if n_gpu > 0:
-        torch.manual_seed_all(args.seed)
+        torch.manual_seed(args.seed)
 
     if not args.do_train and not args.do_predict:
         raise ValueError("At least one of `do_train` or `do_predict` must be True.")
