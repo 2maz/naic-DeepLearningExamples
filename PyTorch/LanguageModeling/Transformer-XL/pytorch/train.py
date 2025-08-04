@@ -496,7 +496,10 @@ def train_iteration(model, i, mems, data_chunks, target_chunks, scaler,
 
     if args.fp16:
         if args.amp == 'pytorch':
-            scaler.scale(loss).backward()
+            if torch.accelerator.current_accelerator().type == 'cuda':
+                scaler.scale(loss).backward()
+            else:
+                loss.backward()
         elif args.amp == 'apex':
             with amp.scale_loss(loss, optimizer, delay_unscale=delay_unscale) as scaled_loss:
                 scaled_loss.backward()
@@ -511,8 +514,6 @@ def train(tr_iter, va_iter, model, para_model, mems, model_config, optimizer,
           optimizer_sparse, scheduler, scheduler_sparse, scaler, vocab, epoch,
           last_batch, last_iter, train_step, best_val_loss, meters,
           timeout_handler, device, args):
-
-    breakpoint()
 
     # Turn on training mode which enables dropout.
     model.train()
@@ -555,14 +556,17 @@ def train(tr_iter, va_iter, model, para_model, mems, model_config, optimizer,
 
         if args.fp16:
             if args.amp == 'pytorch':
-                scaler.unscale_(optimizer)
-                torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
+                if torch.accelerator.current_accelerator().type == 'cuda':
+                    scaler.unscale_(optimizer)
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
+                else:
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
             elif args.amp == 'apex':
                 torch.nn.utils.clip_grad_norm_(amp.master_params(optimizer), args.clip)
         else:
             torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
 
-        if args.fp16 and args.amp == 'pytorch':
+        if args.fp16 and args.amp == 'pytorch' and torch.accelerator.current_accelerator().type == 'cuda':
             scaler.step(optimizer)
             scaler.update()
         else:
