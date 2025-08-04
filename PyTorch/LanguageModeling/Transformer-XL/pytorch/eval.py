@@ -152,7 +152,7 @@ def parse_args():
 
 
 def load_checkpoint(path):
-    dst = f'cuda:{torch.cuda.current_device()}'
+    dst = f'[torch.accelerator.current_accelerator().type}:{torch.accelerator.current_device_index()}'
     logging.info(f'Loading checkpoint from {path}')
     checkpoint = torch.load(path, map_location=dst)
     return checkpoint
@@ -176,7 +176,7 @@ def evaluate(eval_iter, model, meters, log_interval, max_size=None, repeat=1):
     log_latency = 0
     log_loss = 0
 
-    torch.cuda.synchronize()
+    torch.accelerator.synchronize()
     start_time = time.time()
     with torch.no_grad():
         mems = None
@@ -186,10 +186,10 @@ def evaluate(eval_iter, model, meters, log_interval, max_size=None, repeat=1):
                     break
                 eval_step += 1
 
-                torch.cuda.synchronize()
+                torch.accelerator.synchronize()
                 start_iter = time.time()
                 loss, mems = model(data, target, mems)
-                torch.cuda.synchronize()
+                torch.accelerator.synchronize()
                 elapsed = time.time() - start_iter
 
                 loss = loss.float().mean()
@@ -238,7 +238,7 @@ def evaluate(eval_iter, model, meters, log_interval, max_size=None, repeat=1):
                     log_loss = 0
 
     utils.distributed.barrier()
-    torch.cuda.synchronize()
+    torch.accelerator.synchronize()
     total_time = time.time() - start_time
     logging.info('Time : {:.2f}s, {:.2f}ms/segment'.format(
             total_time, 1000 * total_time / (idx+1)))
@@ -256,7 +256,7 @@ def compile_model(model, device, args):
         mems = None
         for _ in range(2):
             _, mems = model(inp, tgt, mems)
-    torch.cuda.synchronize()
+    torch.accelerator.synchronize()
     stop = time.time()
     logging.info(f'Building the model took {stop - start:.2f} seconds')
 
@@ -264,7 +264,7 @@ def compile_model(model, device, args):
 def main():
     args = parse_args()
     if args.affinity != 'disabled':
-        nproc_per_node = torch.cuda.device_count()
+        nproc_per_node = torch.accelerator.device_count()
         affinity = utils.gpu_affinity.set_affinity(
             args.local_rank,
             nproc_per_node,
@@ -277,10 +277,11 @@ def main():
     else:
         from inference.mem_transformer_jit import MemTransformerLM
 
-    torch.cuda.set_device(args.local_rank)
+    torch.accelerator.set_device_index(args.local_rank)
     l2_promote()
-    device = torch.device('cuda' if args.cuda else 'cpu')
-    utils.distributed.init_distributed(args.cuda)
+    gpu_type = torch.accelerator.current_accelerator().type
+    device = torch.device(gpu_type if args.cuda else 'cpu')
+    utils.distributed.init_distributed(args.cuda and gpu_type == 'cuda')
 
     with utils.distributed.sync_workers() as rank:
         if rank == 0:

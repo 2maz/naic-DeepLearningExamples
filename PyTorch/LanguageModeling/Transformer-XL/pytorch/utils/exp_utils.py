@@ -241,8 +241,9 @@ def get_default_rng_states(device):
     Returns a list of random states indexed with a distributed rank. All
     generator states are in host memory.
     """
-    if device == torch.device('cuda'):
-        state = torch.cuda.get_rng_state()
+    if torch.accelerator.is_available():
+        device = torch.accelerator.current_device()
+        state = torch.get_rng_state()
     elif device == torch.device('cpu'):
         state = torch.random.get_rng_state()
     else:
@@ -261,7 +262,7 @@ def set_default_rng_states(rng_states, device):
     rank = utils.distributed.get_rank()
     rng_states = [s.to(torch.device('cpu')) for s in rng_states]
 
-    if device == torch.device('cuda'):
-        torch.cuda.set_rng_state(rng_states[rank])
-    elif device.type == 'cpu':
-        torch.random.set_rng_state(rng_states[rank])
+    if device.type == 'cpu':
+        torch.set_rng_state(rng_states[rank])
+    else:
+        torch.manual_seed(rng_states[rank])

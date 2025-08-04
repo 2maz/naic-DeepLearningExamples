@@ -58,6 +58,21 @@ try:
 except:
     from torch.nn.parallel import DistributedDataParallel as DDP
 
+def gpu_synchronize():
+    gpu_type = torch.accelerator.current_accelerator().type
+    if gpu_type == 'xpu':
+        torch.xpu.synchronize()
+    elif gpu_type == 'hpu':
+        torch.hpu.synchronize()
+    else:
+        torch.synchronize()
+
+def gpu_empty_cache():
+    gpu_type = torch.accelerator.current_accelerator().type
+    if gpu_type == 'xpu':
+        torch.xpu.empty_cache()
+    elif gpu_type == 'cuda':
+        torch.cuda.empty_cache()
 
 def parse_args():
     parser = ArgumentParser(description="Train a Neural Collaborative"
@@ -123,14 +138,18 @@ def init_distributed(args):
         args.local_rank = int(os.environ['LOCAL_RANK'])
 
         '''
-        Set cuda device so everything is done on the right GPU.
+        Set accelerator device so everything is done on the right GPU.
         THIS MUST BE DONE AS SOON AS POSSIBLE.
         '''
-        torch.cuda.set_device(args.local_rank)
+        torch.accelerator.set_device_index(args.local_rank)
 
         '''Initialize distributed communication'''
-        torch.distributed.init_process_group(backend='nccl',
-                                             init_method='env://')
+        if torch.accelerator.current_accelerator().type == 'cuda':
+            torch.distributed.init_process_group(backend='nccl',
+                                                 init_method='env://')
+        else:
+            torch.distributed.init_process_group(backend='gloo',
+                                                 init_method='env://')
     else:
         args.local_rank = 0
 
@@ -233,11 +252,7 @@ def main():
     if args.distributed:
         torch.distributed.broadcast(torch.tensor([1], device="cuda"), 0)
 
-    if args.device_type == 'cuda':
-        torch.cuda.synchronize()
-    elif args.device_type == 'xpu':
-        torch.xpu.synchronize()
-
+    gpu_synchronize()
 
     main_start_time = time.time()
 
@@ -248,8 +263,7 @@ def main():
     train_loader = dataloading.TrainDataloader(trainset, args)
     test_loader = dataloading.TestDataLoader(testset, args)
 
-    # make pytorch memory behavior more consistent later
-    torch.cuda.empty_cache()
+    gpu_empty_cache()
 
     # Create model
     user_feature_name = feature_spec.channel_spec[USER_CHANNEL_NAME][0]

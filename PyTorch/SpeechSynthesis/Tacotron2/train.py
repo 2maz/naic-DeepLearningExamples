@@ -47,6 +47,13 @@ from tacotron2_common.utils import ParseFromConfigFile
 import dllogger as DLLogger
 from dllogger import StdOutBackend, JSONStreamBackend, Verbosity
 
+def gpu_synchronize():
+    device = torch.accelerator.current_accelerator()
+    if device.type == "hpu":
+        torch.hpu.synchronize()
+    else:
+        torch.accelerator.synchronize()
+
 def parse_args(parser):
     """
     Parse commandline arguments.
@@ -305,7 +312,7 @@ def validate(model, criterion, valset, epoch, batch_iter, batch_size,
         num_iters = 0
         val_items_per_sec = 0.0
         for i, batch in enumerate(val_loader):
-            torch.accelerator.synchronize()
+            gpu_synchronize()
 
             iter_start_time = time.perf_counter()
 
@@ -324,7 +331,7 @@ def validate(model, criterion, valset, epoch, batch_iter, batch_size,
                 reduced_num_items = num_items.item()
             val_loss += reduced_val_loss
 
-            torch.accelerator.synchronize()
+            gpu_synchronize()
 
             iter_stop_time = time.perf_counter()
             iter_time = iter_stop_time - iter_start_time
@@ -414,7 +421,7 @@ def main():
     if distributed_run:
         init_distributed(args, world_size, local_rank, args.group_name)
 
-    torch.accelerator.synchronize()
+    gpu_synchronize()
 
     run_start_time = time.perf_counter()
 
@@ -487,7 +494,7 @@ def main():
     model.train()
 
     for epoch in range(start_epoch, args.epochs):
-        torch.accelerator.synchronize()
+        gpu_synchronize()
 
         epoch_start_time = time.perf_counter()
         # used to calculate avg items/sec over epoch
@@ -505,7 +512,7 @@ def main():
             raise RuntimeError("Train loader could not generate a training batch. Please check that batch size <= available data samples")
 
         for i, batch in enumerate(train_loader):
-            torch.accelerator.synchronize()
+            gpu_synchronize()
 
             iter_start_time = time.perf_counter()
             DLLogger.log(step=(epoch, i),
@@ -564,7 +571,9 @@ def main():
                 #       '_growth_tracker': None, '_per_optimizer_states':
                 #           defaultdict(<function _refresh_per_optimizer_state at
                 #     0x7fff3f9dbb50>, {})}
-                if torch.xpu.is_available():
+                # 
+                # for HPU: https://docs.habana.ai/en/latest/PyTorch/PyTorch_Mixed_Precision/index.html#pytorch-mixed-precision-trainin
+                if torch.accelerator.current_accelerator().type in ["xpu", "hpu"]:
                     #scale_factor = 1024
                     #scaled_loss = loss*scale_factor
                     #scaled_loss.backward()
@@ -590,7 +599,7 @@ def main():
 
             model.zero_grad(set_to_none=True)
 
-            torch.accelerator.synchronize()
+            gpu_synchronize()
 
             iter_stop_time = time.perf_counter()
             iter_time = iter_stop_time - iter_start_time
@@ -601,7 +610,7 @@ def main():
             DLLogger.log(step=(epoch, i), data={'train_iter_time': iter_time})
             iteration += 1
 
-        torch.accelerator.synchronize()
+        gpu_synchronize()
 
         epoch_stop_time = time.perf_counter()
         epoch_time = epoch_stop_time - epoch_start_time
@@ -627,7 +636,7 @@ def main():
         if local_rank == 0:
             DLLogger.flush()
 
-    torch.accelerator.synchronize()
+    gpu_synchronize()
 
     run_stop_time = time.perf_counter()
     run_time = run_stop_time - run_start_time

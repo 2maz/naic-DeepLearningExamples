@@ -819,7 +819,8 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
-    device = torch.device("cuda" if args.cuda else "cpu")
+    gpu_type = torch.accelerator.current_accelerator().type
+    device = torch.device(gpu_type if args.cuda else "cpu")
 
     B = 4
     tgt_len, mem_len, ext_len = 36, 36, 0

@@ -358,10 +358,9 @@ def load_checkpoint(path):
     if os.path.isdir(path):
         path = os.path.join(path, 'checkpoint_last.pt')
 
-    if torch.cuda.is_available():
-        dst = f'cuda:{torch.cuda.current_device()}'
-    elif torch.xpu.is_available():
-        dst = f'xpu:{torch.xpu.current_device()}'
+    if torch.accelerator.is_available():
+        acc = torch.accelerator.current_accelerator()
+        dst = f'{acc.type}:{torch.accelerator.current_device_index()}'
 
     logging.info(f'Loading checkpoint from {path}')
     checkpoint = torch.load(path, map_location=dst)
@@ -512,6 +511,9 @@ def train(tr_iter, va_iter, model, para_model, mems, model_config, optimizer,
           optimizer_sparse, scheduler, scheduler_sparse, scaler, vocab, epoch,
           last_batch, last_iter, train_step, best_val_loss, meters,
           timeout_handler, device, args):
+
+    breakpoint()
+
     # Turn on training mode which enables dropout.
     model.train()
 
@@ -705,10 +707,9 @@ def main():
 
     if args.affinity != 'disabled':
         try:
-            if torch.xpu.is_available():
-                nproc_per_node = torch.xpu.device_count()
-            else:
-                nproc_per_node = torch.cuda.device_count()
+            if torch.accelerator.is_available():
+                nproc_per_node = torch.accelerator.device_count()
+
             affinity = utils.gpu_affinity.set_affinity(
                 args.local_rank,
                 nproc_per_node,
@@ -720,16 +721,14 @@ def main():
 
 
     # Initialize device and distributed backend
-    if torch.cuda.is_available():
-        torch.cuda.set_device(args.local_rank)
-        l2_promote()
-        device = torch.device('cuda' if args.cuda else 'cpu')
-    elif torch.xpu.is_available():
-        torch.xpu.set_device(args.local_rank)
-        l2_promote()
-        device = torch.device(args.device_type)
 
-    utils.distributed.init_distributed(args.cuda)
+    gpu_type = torch.accelerator.current_accelerator().type if args.cuda else 'cpu'
+    if torch.accelerator.is_available():
+        torch.accelerator.set_device_index(args.local_rank)
+        l2_promote()
+        device = torch.device(gpu_type)
+
+    utils.distributed.init_distributed(gpu_type == 'cuda')
 
     args.work_dir = utils.exp_utils.build_work_dir_name(args.work_dir,
                                                         args.dataset,

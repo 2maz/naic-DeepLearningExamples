@@ -18,7 +18,7 @@ from contextlib import contextmanager
 import torch
 
 
-def init_distributed(cuda):
+def init_distributed(cuda: bool):
     """
     Initializes distributed backend.
 

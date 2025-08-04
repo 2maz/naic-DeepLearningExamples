@@ -76,9 +76,13 @@ def load_filepaths_and_text(dataset_path, filename, split="|"):
 
 def to_gpu(x):
     x = x.contiguous()
+    if torch.accelerator.is_available():
+        x = x.to(torch.accelerator.current_accelerator(), non_blocking=True)
+    #if torch.cuda.is_available():
+    #    x = x.cuda(non_blocking=True)
+    #elif torch.xpu.is_available():
+    #    x = x.to("xpu", non_blocking=True)
+    #elif torch.hpu.is_available():
+    #    x = x.to("hpu", non_blocking=True)
 
-    if torch.cuda.is_available():
-        x = x.cuda(non_blocking=True)
-    elif torch.xpu.is_available():
-        x = x.to("xpu", non_blocking=True)
     return x
