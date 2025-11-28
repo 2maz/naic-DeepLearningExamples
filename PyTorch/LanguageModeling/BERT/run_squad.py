@@ -829,7 +829,6 @@ def main():
 
     device = torch.device("cpu")
     n_gpu = 0
-
     if args.local_rank == -1 or args.no_cuda:
         if torch.accelerator.is_available() and not args.no_cuda:
             device = torch.accelerator.current_accelerator()
@@ -844,8 +843,9 @@ def main():
         else:
             # Initializes the distributed backend which will take care of sychronizing nodes/GPUs
             torch.distributed.init_process_group(backend='gloo', init_method='env://')
-
         n_gpu = 1
+    else:
+        torch.distributed.init_process_group(backend='gloo', init_method='env://')
 
     if is_main_process():
         dllogger.init(backends=[dllogger.JSONStreamBackend(verbosity=dllogger.Verbosity.VERBOSE,
@@ -870,8 +870,8 @@ def main():
     torch.manual_seed(args.seed)
     dllogger.log(step="PARAMETER", data={"SEED": args.seed})
 
-    if n_gpu > 0:
-        torch.manual_seed(args.seed)
+    #if n_gpu > 0:
+    torch.manual_seed(args.seed)
 
     if not args.do_train and not args.do_predict:
         raise ValueError("At least one of `do_train` or `do_predict` must be True.")
@@ -952,6 +952,8 @@ def main():
         model = DDP(model)
     elif n_gpu > 1:
         model = torch.nn.DataParallel(model)
+    elif n_gpu == 0:
+        model = torch.nn.parallel.DistributedDataParallel(model)
 
     global_step = 0
     if args.do_train:
@@ -999,7 +1001,13 @@ def main():
             train_sampler = RandomSampler(train_data)
         else:
             train_sampler = DistributedSampler(train_data)
-        train_dataloader = DataLoader(train_data, sampler=train_sampler, batch_size=args.train_batch_size * n_gpu)
+
+        if n_gpu > 1:
+            batch_size = args.train_batch_size * n_gpu
+        else:
+            batch_size = args.train_batch_size
+
+        train_dataloader = DataLoader(train_data, sampler=train_sampler, batch_size=batch_size)
 
         model.train()
         scaler = torch.GradScaler()
@@ -1016,6 +1024,7 @@ def main():
 
                 if n_gpu == 1:
                     batch = tuple(t.to(device) for t in batch)  # multi-gpu does scattering it-self
+
                 input_ids, input_mask, segment_ids, start_positions, end_positions = batch
                 with torch.autocast(args.device_type, enabled=args.amp, dtype=torch.bfloat16):
                     start_logits, end_logits = model(input_ids, segment_ids, input_mask)

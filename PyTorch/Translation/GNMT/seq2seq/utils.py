@@ -282,7 +282,7 @@ def init_distributed(cuda):
     world_size = int(os.environ.get('WORLD_SIZE', 1))
     distributed = (world_size > 1)
     if distributed:
-        if cuda and torch.cuda.is_available():
+        if torch.accelerator.current_accelerator().type == "cuda" and torch.version.cuda:
             backend = 'nccl'
         else:
             backend = 'gloo'

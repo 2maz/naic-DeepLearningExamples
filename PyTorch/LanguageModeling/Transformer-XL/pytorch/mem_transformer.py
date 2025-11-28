@@ -21,9 +21,15 @@ from utils.log_uniform_sampler import sample_logits
 from utils.proj_adaptive_softmax import ProjectedAdaptiveLogSoftmax
 
 
-@torch.jit.script
-def add_and_scale(tensor1, tensor2, alpha: float):
-    return alpha * (tensor1 + tensor2)
+# on habana: call failing with NotImplementedError for graph fuser
+# NotImplementedError: Unknown device for graph fuser
+if torch.accelerator.current_accelerator().type == "hpu":
+    def add_and_scale(tensor1, tensor2, alpha: float):
+        return alpha * (tensor1 + tensor2)
+else:
+    @torch.jit.script
+    def add_and_scale(tensor1, tensor2, alpha: float):
+        return alpha * (tensor1 + tensor2)
 
 
 class PositionalEmbedding(nn.Module):

@@ -1,4 +1,4 @@
-pytorch-transformers==1.1.0
-sacremoses==0.0.35
-pynvml==8.0.4
-pyyaml
+pytorch-transformers==1.2.0
+#sacremoses==0.0.35
+sacremoses==0.1.1
+nvidia-ml-py

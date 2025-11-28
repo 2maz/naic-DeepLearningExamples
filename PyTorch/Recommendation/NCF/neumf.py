@@ -51,6 +51,10 @@ class NeuMF(nn.Module):
         self.mlp_item_embed = nn.Embedding(nb_items, mlp_layer_sizes[0] // 2)
         self.dropout = dropout
 
+        self.dropout_fn =  nn.functional.dropout
+        if torch.accelerator.current_accelerator().type == "hpu":
+            self.dropout_fn = self.custom_dropout
+
         self.mlp = nn.ModuleList()
         for i in range(1, nb_mlp_layers):
             self.mlp.extend([nn.Linear(mlp_layer_sizes[i - 1], mlp_layer_sizes[i])])  # noqa: E501
@@ -77,6 +81,15 @@ class NeuMF(nn.Module):
             glorot_uniform(layer)
         lecunn_uniform(self.final)
 
+    def custom_dropout(self, input, p=0.5, training=True):
+        return input
+
+        if not training:
+            return input
+
+        mask = torch.rand_like(input, dtype=torch.float32) < (1 - p)
+        return input * mask / (1 - p)
+
     def forward(self, user, item, sigmoid=False):
         xmfu = self.mf_user_embed(user)
         xmfi = self.mf_item_embed(item)
@@ -88,8 +101,9 @@ class NeuMF(nn.Module):
         for i, layer in enumerate(self.mlp):
             xmlp = layer(xmlp)
             xmlp = nn.functional.relu(xmlp)
+
             if self.dropout != 0:
-                xmlp = nn.functional.dropout(xmlp, p=self.dropout, training=self.training)
+                xmlp = self.dropout_fn(xmlp, p=self.dropout, training=self.training)
 
         x = torch.cat((xmf, xmlp), dim=1)
         x = self.final(x)

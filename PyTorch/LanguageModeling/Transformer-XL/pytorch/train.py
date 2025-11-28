@@ -725,14 +725,18 @@ def main():
 
 
     # Initialize device and distributed backend
+ 
+    if args.device_type == 'cpu':
+        device_type = args.device_type
+    else:
+        device_type = torch.accelerator.current_accelerator().type
 
-    gpu_type = torch.accelerator.current_accelerator().type if args.cuda else 'cpu'
     if torch.accelerator.is_available():
         torch.accelerator.set_device_index(args.local_rank)
         l2_promote()
-        device = torch.device(gpu_type)
+        device = torch.device(device_type)
 
-    utils.distributed.init_distributed(gpu_type == 'cuda')
+    utils.distributed.init_distributed(device_type == 'cuda')
 
     args.work_dir = utils.exp_utils.build_work_dir_name(args.work_dir,
                                                         args.dataset,

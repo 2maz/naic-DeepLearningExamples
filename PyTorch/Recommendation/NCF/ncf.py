@@ -65,7 +65,7 @@ def gpu_synchronize():
     elif gpu_type == 'hpu':
         torch.hpu.synchronize()
     else:
-        torch.synchronize()
+        torch.accelerator.synchronize()
 
 def gpu_empty_cache():
     gpu_type = torch.accelerator.current_accelerator().type
@@ -144,7 +144,7 @@ def init_distributed(args):
         torch.accelerator.set_device_index(args.local_rank)
 
         '''Initialize distributed communication'''
-        if torch.accelerator.current_accelerator().type == 'cuda':
+        if torch.accelerator.current_accelerator().type == 'cuda' and torch.version.cuda:
             torch.distributed.init_process_group(backend='nccl',
                                                  init_method='env://')
         else:
@@ -250,7 +250,7 @@ def main():
 
     # sync workers before timing
     if args.distributed:
-        torch.distributed.broadcast(torch.tensor([1], device="cuda"), 0)
+        torch.distributed.broadcast(torch.tensor([1], device=torch.accelerator.current_accelerator().type), 0)
 
     gpu_synchronize()
 

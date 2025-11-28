@@ -38,7 +38,6 @@ import torch.optim
 import torch.utils.data.distributed
 
 import seq2seq.data.config as config
-import seq2seq.gpu_affinity as gpu_affinity
 import seq2seq.train.trainer as trainers
 import seq2seq.utils as utils
 from seq2seq.data.dataset import LazyParallelDataset
@@ -392,6 +391,7 @@ def main():
         else:
             nproc_per_node = torch.cuda.device_count()
         try:
+            import seq2seq.gpu_affinity as gpu_affinity
             affinity = gpu_affinity.set_affinity(
                 args.local_rank,
                 nproc_per_node,

@@ -187,7 +187,7 @@ def init_distributed(args, world_size, rank, group_name):
         local_device_index = rank % torch.accelerator.device_count()
         torch.accelerator.set_device_index(local_device_index)
 
-        if device_type == "cuda":
+        if device_type == "cuda" and torch.version.cuda:
             # Initialize distributed communication
             dist.init_process_group(
                 backend=args.dist_backend, init_method=args.dist_url,
@@ -414,7 +414,7 @@ def main():
     parser = models.model_parser(model_name, parser)
     args, _ = parser.parse_known_args()
 
-    if args.device_type == 'cuda':
+    if args.device_type == 'cuda' and torch.version.cuda:
         torch.backends.cudnn.enabled = args.cudnn_enabled
         torch.backends.cudnn.benchmark = args.cudnn_benchmark
 

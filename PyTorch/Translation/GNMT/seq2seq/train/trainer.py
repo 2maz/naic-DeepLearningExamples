@@ -30,10 +30,15 @@ import torch
 import torch.optim
 import torch.utils.data
 
+use_apex = False
 try:
-    # https://github.com/NVIDIA/apex/tree/master/examples/imagenet
-    from apex.parallel import DistributedDataParallel
-    from apex import amp
+    if torch.accelerator.current_accelerator().type == "cuda" and torch.version.cuda:
+        # https://github.com/NVIDIA/apex/tree/master/examples/imagenet
+        from apex.parallel import DistributedDataParallel
+        from apex import amp
+        use_apex = True
+    else:
+        raise RuntimeError("Use APEX only with NVIDIA GPUs")
 except:
     print("APEX is not available -- falling back to pytorch DistributedDataParallel")
     from torch.nn.parallel import DistributedDataParallel
@@ -154,7 +159,7 @@ class Seq2SeqTrainer:
                                            **scheduler_config)
 
         if math == 'fp16':
-            if 'apex' in sys.modules:
+            if use_apex:
                 print("Using FP16 with APEX")
                 self.model, self.optimizer = amp.initialize(
                     self.model,
