@@ -946,14 +946,12 @@ def main():
                                     warmup=args.warmup_proportion,
                                     t_total=num_train_optimization_steps)
 
-    if n_gpu == 1:
+    if n_gpu <= 1:
         pass
     elif args.local_rank != -1:
         model = DDP(model)
     elif n_gpu > 1:
         model = torch.nn.DataParallel(model)
-    elif n_gpu == 0:
-        model = torch.nn.parallel.DistributedDataParallel(model)
 
     global_step = 0
     if args.do_train:
@@ -1163,9 +1161,12 @@ def main():
                                              "training_sequences_per_second": len(train_features) * args.num_train_epochs / time_to_train,
                                              "final_loss": final_loss})
         else:
+            device_count = gpu_count
+            if gpu_count == 0:
+                device_count = 1
             dllogger.log(step=tuple(), data={"e2e_train_time": time_to_train,
                                              "training_sequences_per_second": args.train_batch_size * args.gradient_accumulation_steps \
-                                              * args.max_steps * gpu_count / time_to_train,
+                                              * args.max_steps * device_count / time_to_train,
                                               "final_loss": final_loss})
     if args.do_predict and is_main_process():
         dllogger.log(step=tuple(), data={"e2e_inference_time": time_to_infer,

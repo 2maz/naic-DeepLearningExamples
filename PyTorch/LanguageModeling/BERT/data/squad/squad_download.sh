@@ -18,6 +18,8 @@ DIR_DATA=${1:-"/data/squad"}
 echo $DIR_DATA
 echo "Downloading dataset for squad..."
 
+WGET_CMD="wget --no-check-certificate"
+
 # Download SQuAD
 
 pushd .
@@ -25,9 +27,9 @@ cd $DIR_DATA
 
 v1="v1.1"
 mkdir $v1
-wget https://rajpurkar.github.io/SQuAD-explorer/dataset/train-v1.1.json -O $v1/train-v1.1.json
-wget https://rajpurkar.github.io/SQuAD-explorer/dataset/dev-v1.1.json -O $v1/dev-v1.1.json
-wget https://worksheets.codalab.org/rest/bundles/0xbcd57bee090b421c982906709c8c27e1/contents/blob/ -O $v1/evaluate-v1.1.py
+$WGET_CMD https://rajpurkar.github.io/SQuAD-explorer/dataset/train-v1.1.json -O $v1/train-v1.1.json
+$WGET_CMD https://rajpurkar.github.io/SQuAD-explorer/dataset/dev-v1.1.json -O $v1/dev-v1.1.json
+$WGET_CMD https://worksheets.codalab.org/rest/bundles/0xbcd57bee090b421c982906709c8c27e1/contents/blob/ -O $v1/evaluate-v1.1.py
 
 EXP_TRAIN_v1='981b29407e0affa3b1b156f72073b945  -'
 EXP_DEV_v1='3e85deb501d4e538b6bc56f786231552  -'
@@ -38,9 +40,9 @@ CALC_EVAL_v1=`cat ${v1}/evaluate-v1.1.py |md5sum`
 
 v2="v2.0"
 mkdir $v2
-wget https://rajpurkar.github.io/SQuAD-explorer/dataset/train-v2.0.json -O $v2/train-v2.0.json
-wget https://rajpurkar.github.io/SQuAD-explorer/dataset/dev-v2.0.json -O $v2/dev-v2.0.json
-wget https://worksheets.codalab.org/rest/bundles/0x6b567e1cf2e041ec80d7098f031c5c9e/contents/blob/ -O $v2/evaluate-v2.0.py
+$WGET_CMD https://rajpurkar.github.io/SQuAD-explorer/dataset/train-v2.0.json -O $v2/train-v2.0.json
+$WGET_CMD https://rajpurkar.github.io/SQuAD-explorer/dataset/dev-v2.0.json -O $v2/dev-v2.0.json
+$WGET_CMD https://worksheets.codalab.org/rest/bundles/0x6b567e1cf2e041ec80d7098f031c5c9e/contents/blob/ -O $v2/evaluate-v2.0.py
 
 EXP_TRAIN_v2='62108c273c268d70893182d5cf8df740  -'
 EXP_DEV_v2='246adae8b7002f8679c027697b0b7cf8  -'
