@@ -734,7 +734,8 @@ def main():
     if torch.accelerator.is_available():
         torch.accelerator.set_device_index(args.local_rank)
         l2_promote()
-        device = torch.device(device_type)
+
+    device = torch.device(device_type)
 
     utils.distributed.init_distributed(device_type == 'cuda')
 
