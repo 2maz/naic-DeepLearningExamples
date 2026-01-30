@@ -77,7 +77,7 @@ if [ ! -f ${CACHED_DATADIR}/train_ratings.pt ]; then
     echo "preprocessing ${RATINGS_PATH} and save to disk"
     t0=$(date +%s)
 
-    python3 -m venv venv-ncf
+    python3 -m venv --system-site-packages venv-ncf
     chmod -R a+rw venv-ncf
 
     source venv-ncf/bin/activate
