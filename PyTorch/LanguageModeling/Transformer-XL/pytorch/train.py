@@ -111,7 +111,7 @@ def parse_args():
     general.add_argument('--apex_amp_opt_level', type=str, default='O2',
                          choices=['O0', 'O1', 'O2', 'O3'],
                          help='Optimization level for apex amp')
-    general.add_argument('--amp', choices=['apex', 'pytorch'], default='apex',
+    general.add_argument('--amp', choices=['apex', 'pytorch','none'], default='apex',
                          help='Implementation of automatic mixed precision')
     general.add_argument('--affinity', type=str,
                          default='socket_unique_interleaved',
@@ -459,7 +459,7 @@ def evaluate(eval_iter, model, args):
             if args.eval_max_steps > 0 and i >= args.eval_max_steps:
                 break
             enable_autocast = args.fp16 and args.amp == 'pytorch'
-            with torch.autocast(args.device_type, enabled=enable_autocast):
+            with torch.autocast(args.device_type, enabled=enable_autocast, dtype.torch=torch.float16):
                 loss, mems = model(data, target, mems)
                 loss = loss.float().mean().type_as(loss)
             if warm:
@@ -495,19 +495,19 @@ def train_iteration(model, i, mems, data_chunks, target_chunks, scaler,
         mems[i] = mems[i].to(cpu, non_blocking=True)
 
     if args.fp16:
+        if args.amp == 'apex':
+            with amp.scale_loss(loss, optimizer, delay_unscale=delay_unscale) as scaled_loss:
+                scaled_loss.backward()
+                return float(loss.detach())
+
         if args.amp == 'pytorch':
             if torch.accelerator.current_accelerator().type == 'cuda':
                 scaler.scale(loss).backward()
-            else:
-                loss.backward()
-        elif args.amp == 'apex':
-            with amp.scale_loss(loss, optimizer, delay_unscale=delay_unscale) as scaled_loss:
-                scaled_loss.backward()
-    else:
-        loss.backward()
+                return float(loss.detach())
 
-    train_loss = loss.float().item()
-    return train_loss
+    # final fallback
+    loss.backward()
+    return float(loss.detach())
 
 
 def train(tr_iter, va_iter, model, para_model, mems, model_config, optimizer,
@@ -573,6 +573,8 @@ def train(tr_iter, va_iter, model, para_model, mems, model_config, optimizer,
             optimizer.step()
             if optimizer_sparse:
                 optimizer_sparse.step()
+
+        torch.accelerator.synchronize()
 
         # step-wise learning rate annealing
         train_step += 1
@@ -992,8 +994,10 @@ def main():
     for k, v in args.__dict__.items():
         logging.info('    - {} : {}'.format(k, v))
     logging.info('=' * 100)
-    logging.info('#params = {}'.format(args.n_all_param))
-    logging.info('#non emb params = {}'.format(args.n_nonemb_param))
+    if args.n_all_param:
+        logging.info('#params = {}'.format(args.n_all_param))
+    if args.n_nonemb_param:
+        logging.info('#non emb params = {}'.format(args.n_nonemb_param))
 
     train_step = 0
     start_epoch = 1
