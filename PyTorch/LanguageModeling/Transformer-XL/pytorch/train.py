@@ -31,9 +31,12 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import yaml
+
+use_apex = False
 try:
     from apex import amp
-except ModuleNotFoundError:
+    use_apex = True
+except (ModuleNotFoundError, ImportError):
     warnings.warn('APEX AMP is unavailable')
 
 from torch.nn.parallel import DistributedDataParallel
@@ -459,7 +462,7 @@ def evaluate(eval_iter, model, args):
             if args.eval_max_steps > 0 and i >= args.eval_max_steps:
                 break
             enable_autocast = args.fp16 and args.amp == 'pytorch'
-            with torch.autocast(args.device_type, enabled=enable_autocast, dtype.torch=torch.float16):
+            with torch.autocast(args.device_type, enabled=enable_autocast, dtype=torch.float16):
                 loss, mems = model(data, target, mems)
                 loss = loss.float().mean().type_as(loss)
             if warm:
@@ -1163,7 +1166,7 @@ if __name__ == "__main__":
     # Otherwise it'll default to "promote" mode, and we'll get fp32 operations.
     # Note that running `--apex_amp_opt_level O2` will remove the need for this
     # code, but it is still valid.
-    if 'apex' in sys.modules:
+    if use_apex:
         amp.register_half_function(torch, 'einsum')
 
     main()
