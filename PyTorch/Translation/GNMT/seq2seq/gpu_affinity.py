@@ -10,41 +10,76 @@ logger = logging.getLogger(__name__)
 try:
     import pynvml
     pynvml.nvmlInit()
+    logger.warning("nvidia gpu with pynvml will be used on this system")
+
+    def systemGetDriverVersion():
+        return pynvml.nvmlSystemGetDriverVersion()
+
+
+    def deviceGetCount():
+        return pynvml.nvmlDeviceGetCount()
+
+
+    class device:
+        # assume nvml returns list of 64 bit ints
+        _nvml_affinity_elements = math.ceil(os.cpu_count() / 64)
+
+        def __init__(self, device_idx):
+            super().__init__()
+            self.handle = pynvml.nvmlDeviceGetHandleByIndex(device_idx)
+
+        def getName(self):
+            return pynvml.nvmlDeviceGetName(self.handle)
+
+        def getCpuAffinity(self):
+            affinity_string = ''
+            for j in pynvml.nvmlDeviceGetCpuAffinity(
+                self.handle, device._nvml_affinity_elements
+            ):
+                # assume nvml returns list of 64 bit ints
+                affinity_string = '{:064b}'.format(j) + affinity_string
+            affinity_list = [int(x) for x in affinity_string]
+            affinity_list.reverse()  # so core 0 is in 0th element of list
+
+            ret = [i for i, e in enumerate(affinity_list) if e != 0]
+            return ret
 except Exception as e:
     logger.warning("pynvml can not be used on this system")
 
+try:
+    import amdsmi
+    amdsmi.amdsmi_init()
+    logger.warning("rocm with amdsmi will be used on this system")
 
-def systemGetDriverVersion():
-    return pynvml.nvmlSystemGetDriverVersion()
+    def systemGetDriverVersion(device_id):
+        device = amdsmi_get_processor_handles()[device_id]
+        return amdsmi.amdsmi_get_gpu_driver_info(device)
 
 
-def deviceGetCount():
-    return pynvml.nvmlDeviceGetCount()
+    def deviceGetCount():
+        devices = amdsmi.amdsmi_get_processor_handles()
+        return len(devices)
 
+    class device:
+        # assume nvml returns list of 64 bit ints
+        _affinity_elements = math.ceil(os.cpu_count() / 64)
 
-class device:
-    # assume nvml returns list of 64 bit ints
-    _nvml_affinity_elements = math.ceil(os.cpu_count() / 64)
+        def __init__(self, device_idx):
+            super().__init__()
+            devices = amdsmi.amdsmi_get_processor_handles()
+            self.handle = devices[device_idx]
 
-    def __init__(self, device_idx):
-        super().__init__()
-        self.handle = pynvml.nvmlDeviceGetHandleByIndex(device_idx)
+        def getCpuAffinity(self):
+            affinity_string = ''
+            scope = amdsmi.AmdSmiAffinityScope.NUMA_SCOPE
+            for bitmask in amdsmi.amdsmi_get_cpu_affinity_with_scope(self.handle, scope):
+                affinity_string = f'{bitmask:064b}' + affinity_string
+            affinity_list = [int(x) for x in affinity_string]
+            affinity_list.reverse() # so cor 0 is in 0th element of list
 
-    def getName(self):
-        return pynvml.nvmlDeviceGetName(self.handle)
-
-    def getCpuAffinity(self):
-        affinity_string = ''
-        for j in pynvml.nvmlDeviceGetCpuAffinity(
-            self.handle, device._nvml_affinity_elements
-        ):
-            # assume nvml returns list of 64 bit ints
-            affinity_string = '{:064b}'.format(j) + affinity_string
-        affinity_list = [int(x) for x in affinity_string]
-        affinity_list.reverse()  # so core 0 is in 0th element of list
-
-        ret = [i for i, e in enumerate(affinity_list) if e != 0]
-        return ret
+            return [i for i,e in enumerate(affinity_list) if e != 0]
+except Exception as e:
+    logger.warning("pynvml can not be used on this system")
 
 
 def set_socket_affinity(gpu_id):
